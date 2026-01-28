@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# macOS
+.DS_Store
+
+# Input/Output folders content (keep folders, ignore content)
+input/*.eml
+output/*.png
+output/*.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
