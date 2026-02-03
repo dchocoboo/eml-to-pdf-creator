@@ -304,7 +304,50 @@ def convert_eml(eml_path: str, output_dir: Optional[str] = None, width: int = 80
     # Render to PNG and PDF
     render_to_png_pdf(full_html, str(output_base), width, scale)
     
+    # Extract attachments
+    extract_attachments(msg, output_dir / f"{eml_path.stem}_attachments")
+    
     print(f"Conversion complete for: {eml_path.name}")
+
+
+def extract_attachments(msg: EmailMessage, output_dir: Path):
+    """
+    Extract attachments from an email and save them to a directory.
+    
+    Args:
+        msg: The parsed EmailMessage object
+        output_dir: Directory to save attachments to
+    """
+    attachments_found = False
+    
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_disposition = str(part.get("Content-Disposition", ""))
+            
+            if "attachment" in content_disposition:
+                filename = part.get_filename()
+                if filename:
+                    if not attachments_found:
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        attachments_found = True
+                        print(f"Extracting attachments to: {output_dir}")
+                    
+                    filepath = output_dir / filename
+                    
+                    # Handle duplicate filenames
+                    counter = 1
+                    while filepath.exists():
+                        name_stem = Path(filename).stem
+                        suffix = Path(filename).suffix
+                        filepath = output_dir / f"{name_stem}_{counter}{suffix}"
+                        counter += 1
+                        
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        with open(filepath, "wb") as f:
+                            f.write(payload)
+                        print(f"  - Saved: {filepath.name}")
+
 
 
 def main():

@@ -20,10 +20,18 @@ echo ""
 # Create folders if they don't exist
 mkdir -p "$INPUT_DIR" "$OUTPUT_DIR"
 
-# Check if virtual environment exists
-if [ ! -d "$SCRIPT_DIR/.venv" ]; then
-    echo "Error: Virtual environment not found at $SCRIPT_DIR/.venv"
-    echo "Please run: python3 -m venv .venv && .venv/bin/pip install playwright && .venv/bin/playwright install chromium"
+# Check if python3 is available
+if ! command -v python3 &> /dev/null; then
+    echo "Error: python3 is not installed or not in your PATH."
+    echo ""
+    read -p "Press Enter to close..."
+    exit 1
+fi
+
+# Check if playwright is installed
+if ! python3 -c "import playwright" &> /dev/null; then
+    echo "Error: 'playwright' library is not installed."
+    echo "Please run: pip3 install -r requirements.txt && playwright install chromium"
     echo ""
     read -p "Press Enter to close..."
     exit 1
@@ -50,7 +58,7 @@ echo ""
 echo "Starting conversion..."
 echo ""
 
-"$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/eml_to_image.py" "$INPUT_DIR"/*.eml -o "$OUTPUT_DIR"
+python3 "$SCRIPT_DIR/eml_to_image.py" "$INPUT_DIR"/*.eml -o "$OUTPUT_DIR"
 
 echo ""
 echo "============================================"

@@ -13,14 +13,11 @@ Convert email `.eml` files to PNG images and PDF documents.
 ## Setup
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv
-
 # Install dependencies
-.venv/bin/pip install playwright
+pip3 install -r requirements.txt
 
 # Install Chromium browser
-.venv/bin/playwright install chromium
+playwright install chromium
 ```
 
 ## Usage
@@ -35,13 +32,13 @@ python3 -m venv .venv
 
 ```bash
 # Single file
-.venv/bin/python eml_to_image.py input/email.eml -o output/
+python3 eml_to_image.py input/email.eml -o output/
 
 # Multiple files
-.venv/bin/python eml_to_image.py input/*.eml -o output/
+python3 eml_to_image.py input/*.eml -o output/
 
 # Custom width and scale
-.venv/bin/python eml_to_image.py input/*.eml -o output/ -w 1024 -s 3.0
+python3 eml_to_image.py input/*.eml -o output/ -w 1024 -s 3.0
 ```
 
 ### Options
