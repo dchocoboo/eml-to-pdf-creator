@@ -307,6 +307,10 @@ def convert_eml(eml_path: str, output_dir: Optional[str] = None, width: int = 80
     # Extract attachments
     extract_attachments(msg, output_dir / f"{eml_path.stem}_attachments")
     
+    # Delete the input file after successful conversion
+    eml_path.unlink()
+    print(f"Deleted input file: {eml_path}")
+    
     print(f"Conversion complete for: {eml_path.name}")
 
 
