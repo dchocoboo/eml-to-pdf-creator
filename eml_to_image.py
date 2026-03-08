@@ -212,10 +212,43 @@ def create_full_html(msg: EmailMessage, body_html: str, embedded_images: dict) -
 </html>"""
 
 
+def normalize_html_charset(html_content: str) -> str:
+    """
+    Normalize HTML charset declaration to UTF-8.
+    Since we write all files as UTF-8, ensure the meta tag matches.
+    """
+    # Replace any existing charset declarations with UTF-8
+    # Handle both http-equiv and meta charset formats
+    html_content = re.sub(
+        r'<meta\s+http-equiv=["\']?Content-Type["\']?\s+content=["\']([^"\']*)["\']',
+        '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8"',
+        html_content,
+        flags=re.IGNORECASE
+    )
+    html_content = re.sub(
+        r'<meta\s+charset=["\']?[^\s>]*["\']?',
+        '<meta charset="UTF-8"',
+        html_content,
+        flags=re.IGNORECASE
+    )
+
+    # If no charset meta tag exists, add one
+    if '<meta' not in html_content.lower() or 'charset' not in html_content.lower():
+        # Add charset meta tag after <head>
+        html_content = re.sub(
+            r'(<head[^>]*>)',
+            r'\1\n    <meta charset="UTF-8">',
+            html_content,
+            flags=re.IGNORECASE
+        )
+
+    return html_content
+
+
 def render_to_png_pdf(html_content: str, output_base: str, width: int = 800, scale: float = 2.0):
     """
     Render HTML content to PNG and PDF using Playwright.
-    
+
     Args:
         html_content: The HTML content to render
         output_base: Base path for output files (without extension)
@@ -224,11 +257,14 @@ def render_to_png_pdf(html_content: str, output_base: str, width: int = 800, sca
     """
     png_path = f"{output_base}.png"
     pdf_path = f"{output_base}.pdf"
-    
+
+    # Normalize charset declaration to UTF-8 to match file encoding
+    html_content = normalize_html_charset(html_content)
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": width, "height": 800}, device_scale_factor=scale)
-        
+
         # Create a temporary HTML file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
             f.write(html_content)
