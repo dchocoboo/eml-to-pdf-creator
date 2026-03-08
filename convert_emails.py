@@ -46,7 +46,7 @@ def main():
         print("No .eml files found in input folder.")
         print(f"Please put your .eml files in: {input_dir}")
         print()
-        input("Press Enter to close...")
+        # input("Press Enter to close...")
         sys.exit(0)
 
     print("Found the following .eml files:")
