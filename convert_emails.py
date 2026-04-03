@@ -72,6 +72,8 @@ def main():
     print("=" * 50)
     if result.returncode == 0:
         print("Conversion complete!")
+        # Open the output directory in Finder
+        subprocess.run(["open", str(output_dir)])
     else:
         print("Conversion finished with errors.")
     print(f"Output files are in: {output_dir}")
