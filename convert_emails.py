@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-EML to PNG/PDF Converter Launcher
+EML to PDF Converter Launcher
 
 Double-click to convert all .eml files in the input folder.
 """
@@ -18,7 +18,7 @@ def main():
     output_dir = script_dir / "output"
 
     print("=" * 50)
-    print("EML to PNG/PDF Converter")
+    print("EML to PDF Converter")
     print("=" * 50)
     print()
     print(f"Input folder:  {input_dir}")

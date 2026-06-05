@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-EML to PNG/PDF Converter
+EML to PDF Converter
 
-Converts email (.eml) files to PNG images and PDF documents.
+Converts email (.eml) files to PDF documents.
 Handles HTML emails, plain text emails, and embedded images.
 """
 
@@ -245,17 +245,15 @@ def normalize_html_charset(html_content: str) -> str:
     return html_content
 
 
-def render_to_png_pdf(html_content: str, output_base: str, width: int = 800, scale: float = 2.0):
+def render_to_pdf(html_content: str, output_base: str, width: int = 800):
     """
-    Render HTML content to PNG and PDF using Playwright.
+    Render HTML content to PDF using Playwright.
 
     Args:
         html_content: The HTML content to render
         output_base: Base path for output files (without extension)
         width: Viewport width for rendering
-        scale: Device scale factor for PNG (2.0 = retina quality)
     """
-    png_path = f"{output_base}.png"
     pdf_path = f"{output_base}.pdf"
 
     # Normalize charset declaration to UTF-8 to match file encoding
@@ -263,7 +261,7 @@ def render_to_png_pdf(html_content: str, output_base: str, width: int = 800, sca
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 800}, device_scale_factor=scale)
+        page = browser.new_page(viewport={"width": width, "height": 800})
 
         # Create a temporary HTML file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
@@ -280,12 +278,8 @@ def render_to_png_pdf(html_content: str, output_base: str, width: int = 800, sca
             # Get the full page height
             full_height = page.evaluate('document.documentElement.scrollHeight')
             
-            # Resize viewport to full content height for screenshot
+            # Resize viewport to full content height before generating the PDF
             page.set_viewport_size({"width": width, "height": full_height})
-            
-            # Take full page screenshot as PNG
-            page.screenshot(path=png_path, full_page=True)
-            print(f"Created PNG: {png_path}")
             
             # Generate PDF without page breaks
             # Using a very long page to avoid breaks
@@ -303,15 +297,14 @@ def render_to_png_pdf(html_content: str, output_base: str, width: int = 800, sca
             browser.close()
 
 
-def convert_eml(eml_path: str, output_dir: Optional[str] = None, width: int = 800, scale: float = 2.0):
+def convert_eml(eml_path: str, output_dir: Optional[str] = None, width: int = 800):
     """
-    Convert an EML file to PNG and PDF.
+    Convert an EML file to PDF.
     
     Args:
         eml_path: Path to the EML file
         output_dir: Output directory (defaults to same as input file)
         width: Viewport width for rendering
-        scale: Device scale factor for PNG (2.0 = retina quality)
     """
     eml_path = Path(eml_path)
     
@@ -337,8 +330,8 @@ def convert_eml(eml_path: str, output_dir: Optional[str] = None, width: int = 80
     # Create full HTML with headers
     full_html = create_full_html(msg, body_html, embedded_images)
     
-    # Render to PNG and PDF
-    render_to_png_pdf(full_html, str(output_base), width, scale)
+    # Render to PDF
+    render_to_pdf(full_html, str(output_base), width)
     
     # Extract attachments
     extract_attachments(msg, output_dir / f"{eml_path.stem}_attachments")
@@ -392,7 +385,7 @@ def extract_attachments(msg: EmailMessage, output_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert EML email files to PNG and PDF",
+        description="Convert EML email files to PDF",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -421,18 +414,11 @@ Examples:
         help="Viewport width for rendering (default: 800)"
     )
     
-    parser.add_argument(
-        "-s", "--scale",
-        type=float,
-        default=2.0,
-        help="Device scale factor for PNG quality (default: 2.0 for retina)"
-    )
-    
     args = parser.parse_args()
     
     for eml_file in args.eml_files:
         try:
-            convert_eml(eml_file, args.output, args.width, args.scale)
+            convert_eml(eml_file, args.output, args.width)
         except Exception as e:
             print(f"Error processing {eml_file}: {e}")
 
