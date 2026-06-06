@@ -13,11 +13,22 @@ enum MailToNotesSettings {
     ]
     static let defaultNotesFolder = "Purchases"
     static let defaultMarkColor = "green"
+    static let defaultOutputDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Documents", isDirectory: true)
+        .appendingPathComponent("MailToNotes PDFs", isDirectory: true)
+        .path
 
     struct Config: Codable {
         var keywords: [String]
         var notesFolder: String
         var markColor: String
+        var outputDirectory: String?
+    }
+
+    static var preferencesURL: URL {
+        sharedLibraryDirectory
+            .appendingPathComponent("Preferences", isDirectory: true)
+            .appendingPathComponent("com.local.mailtonotes.settings.plist")
     }
 
     static var configURL: URL {
@@ -26,7 +37,7 @@ enum MailToNotesSettings {
             .appendingPathComponent("config.json")
     }
 
-    static var applicationSupportDirectory: URL {
+    static var sharedLibraryDirectory: URL {
         if Bundle.main.bundleIdentifier == "com.local.mailtonotes" {
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library", isDirectory: true)
@@ -34,13 +45,17 @@ enum MailToNotesSettings {
                 .appendingPathComponent("com.local.mailtonotes.extension", isDirectory: true)
                 .appendingPathComponent("Data", isDirectory: true)
                 .appendingPathComponent("Library", isDirectory: true)
-                .appendingPathComponent("Application Support", isDirectory: true)
         }
 
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
+        return FileManager.default.urls(
+            for: .libraryDirectory,
             in: .userDomainMask
         )[0]
+    }
+
+    static var applicationSupportDirectory: URL {
+        let appSupport = sharedLibraryDirectory
+            .appendingPathComponent("Application Support", isDirectory: true)
         return appSupport
     }
 
@@ -56,41 +71,87 @@ enum MailToNotesSettings {
         load().markColor
     }
 
-    static func save(keywords: [String], notesFolder: String, markColor: String) {
+    static var outputDirectory: String {
+        normalizeOutputDirectory(load().outputDirectory)
+    }
+
+    static func save(
+        keywords: [String],
+        notesFolder: String,
+        markColor: String,
+        outputDirectory: String
+    ) {
         let config = Config(
             keywords: normalizeKeywords(keywords),
             notesFolder: normalizeNotesFolder(notesFolder),
-            markColor: normalizeMarkColor(markColor)
+            markColor: normalizeMarkColor(markColor),
+            outputDirectory: normalizeOutputDirectory(outputDirectory)
         )
 
         do {
             try FileManager.default.createDirectory(
-                at: configURL.deletingLastPathComponent(),
+                at: preferencesURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let data = try JSONEncoder().encode(config)
-            try data.write(to: configURL, options: .atomic)
+            let encoder = PropertyListEncoder()
+            encoder.outputFormat = .xml
+            let data = try encoder.encode(config)
+            try data.write(to: preferencesURL, options: .atomic)
         } catch {
             NSLog("MailToNotes failed to save settings: \(error.localizedDescription)")
         }
     }
 
     static func load() -> Config {
+        if let preferencesConfig = loadPreferencesConfig() {
+            return preferencesConfig
+        }
+
+        if let legacyConfig = loadLegacyConfig() {
+            save(
+                keywords: legacyConfig.keywords,
+                notesFolder: legacyConfig.notesFolder,
+                markColor: legacyConfig.markColor,
+                outputDirectory: normalizeOutputDirectory(legacyConfig.outputDirectory)
+            )
+            return legacyConfig
+        }
+
+        return Config(
+            keywords: defaultKeywords,
+            notesFolder: defaultNotesFolder,
+            markColor: defaultMarkColor,
+            outputDirectory: defaultOutputDirectory
+        )
+    }
+
+    private static func loadPreferencesConfig() -> Config? {
+        do {
+            let data = try Data(contentsOf: preferencesURL)
+            let config = try PropertyListDecoder().decode(Config.self, from: data)
+            return normalizedConfig(config)
+        } catch {
+            return nil
+        }
+    }
+
+    private static func loadLegacyConfig() -> Config? {
         do {
             let data = try Data(contentsOf: configURL)
             let config = try JSONDecoder().decode(Config.self, from: data)
-            return Config(
-                keywords: normalizeKeywords(config.keywords),
-                notesFolder: normalizeNotesFolder(config.notesFolder),
-                markColor: normalizeMarkColor(config.markColor)
-            )
+            return normalizedConfig(config)
         } catch {
-            return Config(
-                keywords: defaultKeywords,
-                notesFolder: defaultNotesFolder,
-                markColor: defaultMarkColor
-            )
+            return nil
         }
+    }
+
+    private static func normalizedConfig(_ config: Config) -> Config {
+        Config(
+            keywords: normalizeKeywords(config.keywords),
+            notesFolder: normalizeNotesFolder(config.notesFolder),
+            markColor: normalizeMarkColor(config.markColor),
+            outputDirectory: normalizeOutputDirectory(config.outputDirectory)
+        )
     }
 
     static func normalizeKeywords(_ rawKeywords: [String]) -> [String] {
@@ -108,5 +169,11 @@ enum MailToNotesSettings {
     static func normalizeMarkColor(_ markColor: String) -> String {
         let allowedColors = ["green", "blue", "gray", "orange", "purple", "red", "yellow"]
         return allowedColors.contains(markColor) ? markColor : defaultMarkColor
+    }
+
+    static func normalizeOutputDirectory(_ outputDirectory: String?) -> String {
+        let trimmed = outputDirectory?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? defaultOutputDirectory : (trimmed as NSString).expandingTildeInPath
     }
 }
