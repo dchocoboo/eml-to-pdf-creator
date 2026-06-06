@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXTENSION_LIBRARY_DIR = (
     Path.home()
@@ -34,7 +35,10 @@ SETTINGS_PLIST = (
 )
 DEFAULT_NOTES_FOLDER = "Purchases"
 
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(next(
+    path for path in [REPO_ROOT, SCRIPT_DIR, SCRIPT_DIR.parent]
+    if (path / "eml_to_image.py").exists()
+)))
 from eml_to_image import convert_eml  # noqa: E402
 
 
@@ -62,7 +66,8 @@ def main() -> int:
         metadata_path = eml_path.with_suffix(".json")
         if metadata_path.exists():
             metadata_path.unlink()
-        eml_path.unlink()
+        if eml_path.exists():
+            eml_path.unlink()
 
     notify_processed(processed_subjects)
     return 0

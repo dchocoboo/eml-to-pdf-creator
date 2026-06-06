@@ -2,6 +2,87 @@ import AppKit
 import Foundation
 import MailKit
 
+final class EMLDropView: NSView {
+    var onDropFiles: (([URL]) -> Void)?
+
+    private let titleLabel = NSTextField(labelWithString: "Drop .eml files here")
+    private let detailLabel = NSTextField(labelWithString: "They will be converted using the saved output and Notes folders.")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    var statusText: String {
+        get { detailLabel.stringValue }
+        set { detailLabel.stringValue = newValue }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        acceptsEMLFiles(sender) ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        acceptsEMLFiles(sender) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = fileURLs(from: sender).filter { $0.pathExtension.lowercased() == "eml" }
+        guard !urls.isEmpty else {
+            return false
+        }
+
+        onDropFiles?(urls)
+        return true
+    }
+
+    private func setup() {
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        registerForDraggedTypes([.fileURL])
+
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+
+        let stack = NSStackView(views: [titleLabel, detailLabel])
+        stack.orientation = .vertical
+        stack.spacing = 4
+        stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    private func acceptsEMLFiles(_ sender: NSDraggingInfo) -> Bool {
+        fileURLs(from: sender).contains { $0.pathExtension.lowercased() == "eml" }
+    }
+
+    private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+        guard let values = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] else {
+            return []
+        }
+
+        return values
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var keywords = MailToNotesSettings.keywords
@@ -12,6 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notesFolderField = NSTextField()
     private let outputFolderField = NSTextField()
     private let markColorPopup = NSPopUpButton()
+    private let dropView = EMLDropView()
+    private var queueProcess: Process?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let titleLabel = NSTextField(labelWithString: "MailToNotes")
@@ -69,13 +152,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         markColorPopup.addItems(withTitles: ["green", "blue", "gray", "orange", "purple", "red", "yellow"])
         markColorPopup.selectItem(withTitle: MailToNotesSettings.markColor)
 
+        dropView.onDropFiles = { [weak self] urls in
+            self?.convertDroppedEMLFiles(urls)
+        }
+
         let saveButton = NSButton(title: "Save", target: self, action: #selector(saveSettings))
         saveButton.bezelStyle = .rounded
 
         let reloadButton = NSButton(title: "Reload Visible Messages", target: self, action: #selector(reloadVisibleMessages))
         reloadButton.bezelStyle = .rounded
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 500))
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 610))
         [
             titleLabel,
             subtitleLabel,
@@ -89,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             chooseOutputFolderButton,
             markColorLabel,
             markColorPopup,
+            dropView,
             saveButton,
             reloadButton
         ].forEach {
@@ -140,6 +228,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             markColorPopup.centerYAnchor.constraint(equalTo: markColorLabel.centerYAnchor),
             markColorPopup.leadingAnchor.constraint(equalTo: notesFolderField.leadingAnchor),
 
+            dropView.topAnchor.constraint(equalTo: markColorLabel.bottomAnchor, constant: 18),
+            dropView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            dropView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            dropView.heightAnchor.constraint(equalToConstant: 92),
+
             saveButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
             saveButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24),
 
@@ -169,13 +262,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func saveSettings() {
+        persistSettings(reloadVisibleMessages: true)
+    }
+
+    private func persistSettings(reloadVisibleMessages shouldReload: Bool) {
         MailToNotesSettings.save(
             keywords: keywords,
             notesFolder: notesFolderField.stringValue,
             markColor: markColorPopup.titleOfSelectedItem ?? MailToNotesSettings.defaultMarkColor,
             outputDirectory: outputFolderField.stringValue
         )
-        reloadVisibleMessages()
+        if shouldReload {
+            reloadVisibleMessages()
+        }
     }
 
     @objc private func chooseOutputFolder() {
@@ -274,6 +373,162 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keywordsStackView.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: keywordsStackView.widthAnchor).isActive = true
             removeButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        }
+    }
+
+    private func convertDroppedEMLFiles(_ urls: [URL]) {
+        guard queueProcess == nil else {
+            dropView.statusText = "Conversion is already running."
+            return
+        }
+
+        persistSettings(reloadVisibleMessages: false)
+
+        do {
+            let queuedCount = try queueDroppedFiles(urls)
+            guard queuedCount > 0 else {
+                dropView.statusText = "Drop one or more .eml files to convert."
+                return
+            }
+
+            dropView.statusText = "Queued \(queuedCount) file\(queuedCount == 1 ? "" : "s"). Converting..."
+            try runQueueProcessor()
+        } catch {
+            dropView.statusText = "Could not start conversion: \(error.localizedDescription)"
+            NSLog("MailToNotes drop conversion failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func queueDroppedFiles(_ urls: [URL]) throws -> Int {
+        let queueDirectory = MailToNotesSettings.applicationSupportDirectory
+            .appendingPathComponent("MailToNotes", isDirectory: true)
+            .appendingPathComponent("Incoming", isDirectory: true)
+
+        try FileManager.default.createDirectory(
+            at: queueDirectory,
+            withIntermediateDirectories: true
+        )
+
+        var queuedCount = 0
+        for sourceURL in urls where sourceURL.pathExtension.lowercased() == "eml" {
+            let fileBase = uniqueFileBase(for: sourceURL)
+            let emlURL = queueDirectory.appendingPathComponent("\(fileBase).eml")
+            let metadataURL = queueDirectory.appendingPathComponent("\(fileBase).json")
+
+            if FileManager.default.fileExists(atPath: emlURL.path) {
+                try FileManager.default.removeItem(at: emlURL)
+            }
+
+            try FileManager.default.copyItem(at: sourceURL, to: emlURL)
+
+            let metadata = DroppedMessageMetadata(
+                subject: sourceURL.deletingPathExtension().lastPathComponent,
+                from: "Dropped file",
+                dateReceived: nil,
+                messageID: nil,
+                emlFile: emlURL.lastPathComponent
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(metadata).write(to: metadataURL, options: .atomic)
+            queuedCount += 1
+        }
+
+        return queuedCount
+    }
+
+    private func runQueueProcessor() throws {
+        guard let processorURL = processorScriptURL() else {
+            throw MailToNotesHostError.processorNotFound
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", processorURL.path]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        process.terminationHandler = { [weak self] process in
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+
+            DispatchQueue.main.async {
+                self?.queueProcess = nil
+                if process.terminationStatus == 0 {
+                    self?.dropView.statusText = "Conversion complete."
+                } else {
+                    self?.dropView.statusText = "Conversion failed. Check Console for details."
+                    NSLog("MailToNotes queue processor failed: \(output)")
+                }
+            }
+        }
+
+        queueProcess = process
+        try process.run()
+    }
+
+    private func processorScriptURL() -> URL? {
+        let sourceFileURL = URL(fileURLWithPath: #filePath)
+        let mailkitDirectory = sourceFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent("process_mailkit_queue.py"),
+            Bundle.main.resourceURL?.appendingPathComponent("Scripts/process_mailkit_queue.py"),
+            mailkitDirectory.appendingPathComponent("Scripts/process_mailkit_queue.py")
+        ].compactMap { $0 }
+
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private func uniqueFileBase(for sourceURL: URL) -> String {
+        let dateStamp = Self.dropDateFormatter.string(from: Date())
+        let name = sanitize(sourceURL.deletingPathExtension().lastPathComponent)
+        let id = UUID().uuidString.prefix(8)
+        return "\(dateStamp)-\(name)-\(id)"
+    }
+
+    private func sanitize(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics
+        let scalars = value.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let collapsed = String(scalars).replacingOccurrences(
+            of: "-+",
+            with: "-",
+            options: .regularExpression
+        )
+        let trimmed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return String((trimmed.isEmpty ? "dropped-email" : trimmed).prefix(80))
+    }
+
+    private static let dropDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
+}
+
+private struct DroppedMessageMetadata: Encodable {
+    let subject: String
+    let from: String
+    let dateReceived: TimeInterval?
+    let messageID: String?
+    let emlFile: String
+}
+
+private enum MailToNotesHostError: LocalizedError {
+    case processorNotFound
+
+    var errorDescription: String? {
+        switch self {
+        case .processorNotFound:
+            return "The MailToNotes queue processor script could not be found."
         }
     }
 }
