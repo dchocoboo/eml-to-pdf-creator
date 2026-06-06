@@ -1,0 +1,75 @@
+name: MailToNotes
+options:
+  bundleIdPrefix: com.local
+  deploymentTarget:
+    macOS: "12.0"
+settings:
+  base:
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    MACOSX_DEPLOYMENT_TARGET: "12.0"
+targets:
+  MailToNotes:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/MailToNotesHost
+      - path: Sources/MailToNotesShared
+      - path: Resources/MailToNotes.icns
+    entitlements:
+      path: Resources/Host/MailToNotes.entitlements
+    info:
+      path: Resources/Host/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: "$(DEVELOPMENT_LANGUAGE)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleIconFile: MailToNotes
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.mailtonotes
+        PRODUCT_NAME: MailToNotes
+    dependencies:
+      - target: MailToNotesExtension
+        embed: true
+  MailToNotesExtension:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/MailToNotesExtension
+      - path: Sources/MailToNotesShared
+      - path: Resources/MailToNotes.icns
+    entitlements:
+      path: Resources/Extension/MailToNotesExtension.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+    info:
+      path: Resources/Extension/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: "$(DEVELOPMENT_LANGUAGE)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleIconFile: MailToNotes
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.email.extension
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).MailToNotesExtension"
+          NSExtensionAttributes:
+            MEExtensionCapabilities:
+              - MEMessageActionHandler
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.mailtonotes.extension
+        PRODUCT_NAME: MailToNotesExtension
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"

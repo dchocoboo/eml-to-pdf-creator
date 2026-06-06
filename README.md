@@ -34,6 +34,18 @@ Use `Convert Mail Selection to Notes.applescript` as a macOS Quick Action:
 
 Then select one or more messages in Apple Mail and run **Mail > Services > Convert Mail to Notes**. The script saves each message as an `.eml`, creates a PDF in `output/`, and creates a note in the `Purchases` folder in Apple Notes.
 
+### MailKit Extension
+
+The `mailkit/` folder contains a MailKit prototype for purchase-like incoming messages. MailKit does not add a custom right-click command for selected messages; it runs as Mail downloads messages. The extension queues matching raw emails, then the processor converts them to PDFs and creates Apple Notes.
+
+```bash
+# Requires the Xcode license to be accepted first.
+mailkit/Scripts/build_mailkit_app.sh --install
+mailkit/Scripts/process_mailkit_queue.py
+```
+
+See `mailkit/README.md` for setup details.
+
 ### macOS (Double-click)
 
 1. Put your `.eml` files in the `input/` folder

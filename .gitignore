@@ -8,6 +8,9 @@
 input/*.eml
 output/*.png
 output/*.pdf
+mailkit/build/
+mailkit/dist/
+mailkit/MailToNotes.xcodeproj/
 
 # Python
 __pycache__/
