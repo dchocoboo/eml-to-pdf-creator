@@ -60,7 +60,11 @@ def main() -> int:
         print(f"Processing {eml_path.name}")
 
         convert_eml(str(eml_path), str(output_dir))
-        create_note(metadata, pdf_path)
+        try:
+            create_note(metadata, pdf_path)
+        except Exception as error:
+            print(f"Warning: PDF was created but Apple Notes update failed: {error}")
+
         processed_subjects.append(metadata.get("subject") or eml_path.stem)
 
         metadata_path = eml_path.with_suffix(".json")

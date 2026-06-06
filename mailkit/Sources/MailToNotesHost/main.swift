@@ -4,9 +4,13 @@ import MailKit
 
 final class EMLDropView: NSView {
     var onDropFiles: (([URL]) -> Void)?
+    var onMailMessageDrop: (() -> Bool)?
+    var onDebugLog: ((String) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "Drop .eml files here")
     private let detailLabel = NSTextField(labelWithString: "They will be converted using the saved output and Notes folders.")
+    private let promiseQueue = OperationQueue()
+    private var pendingPromiseReceivers: [NSFilePromiseReceiver] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -33,12 +37,16 @@ final class EMLDropView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = fileURLs(from: sender).filter { $0.pathExtension.lowercased() == "eml" }
-        guard !urls.isEmpty else {
-            return false
+        if !urls.isEmpty {
+            onDropFiles?(urls)
+            return true
         }
 
-        onDropFiles?(urls)
-        return true
+        if isMailMessageDrop(sender), onMailMessageDrop?() == true {
+            return true
+        }
+
+        return receivePromisedFiles(from: sender)
     }
 
     private func setup() {
@@ -47,7 +55,11 @@ final class EMLDropView: NSView {
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor
         layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        registerForDraggedTypes([.fileURL])
+        let promisedTypes = NSFilePromiseReceiver.readableDraggedTypes
+            .map { NSPasteboard.PasteboardType($0) }
+        registerForDraggedTypes([.fileURL, NSPasteboard.PasteboardType("NSFilesPromisePboardType")] + promisedTypes)
+        promiseQueue.name = "MailToNotes promised file receiver"
+        promiseQueue.maxConcurrentOperationCount = 1
 
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         detailLabel.textColor = .secondaryLabelColor
@@ -69,6 +81,8 @@ final class EMLDropView: NSView {
 
     private func acceptsEMLFiles(_ sender: NSDraggingInfo) -> Bool {
         fileURLs(from: sender).contains { $0.pathExtension.lowercased() == "eml" }
+            || isMailMessageDrop(sender)
+            || !filePromiseReceivers(from: sender).isEmpty
     }
 
     private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
@@ -80,6 +94,88 @@ final class EMLDropView: NSView {
         }
 
         return values
+    }
+
+    private func filePromiseReceivers(from sender: NSDraggingInfo) -> [NSFilePromiseReceiver] {
+        sender.draggingPasteboard.readObjects(
+            forClasses: [NSFilePromiseReceiver.self],
+            options: nil
+        ) as? [NSFilePromiseReceiver] ?? []
+    }
+
+    private func isMailMessageDrop(_ sender: NSDraggingInfo) -> Bool {
+        sender.draggingPasteboard.types?.contains {
+            $0.rawValue.localizedCaseInsensitiveContains("com.apple.mail")
+        } ?? false
+    }
+
+    private func receivePromisedFiles(from sender: NSDraggingInfo) -> Bool {
+        let receivers = filePromiseReceivers(from: sender)
+        guard !receivers.isEmpty else {
+            return false
+        }
+
+        statusText = "Receiving files from Mail..."
+        pendingPromiseReceivers = receivers
+        let pasteboardTypes = sender.draggingPasteboard.types?
+            .map { $0.rawValue }
+            .joined(separator: ", ") ?? "none"
+        let promisedTypes = receivers.flatMap { $0.fileTypes }
+            .joined(separator: ", ")
+        onDebugLog?("Drop pasteboard types: \(pasteboardTypes)")
+        onDebugLog?("Mail promised file types: \(promisedTypes)")
+
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MailToNotesDrops-\(UUID().uuidString)", isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(
+                at: destinationURL,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            statusText = "Could not prepare drop folder: \(error.localizedDescription)"
+            return false
+        }
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var receivedURLs: [URL] = []
+        var errors: [Error] = []
+
+        for receiver in receivers {
+            group.enter()
+            receiver.receivePromisedFiles(
+                atDestination: destinationURL,
+                options: [:],
+                operationQueue: promiseQueue
+            ) { fileURL, error in
+                lock.lock()
+                receivedURLs.append(fileURL)
+                if let error {
+                    errors.append(error)
+                }
+                lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            let emlURLs = receivedURLs.filter { $0.pathExtension.lowercased() == "eml" }
+            let receivedPaths = receivedURLs.map { $0.path }.joined(separator: ", ")
+            self?.onDebugLog?("Received promised files: \(receivedPaths)")
+            self?.pendingPromiseReceivers = []
+            if !emlURLs.isEmpty {
+                self?.onDropFiles?(emlURLs)
+            } else if let error = errors.first {
+                self?.statusText = "Could not receive Mail file: \(error.localizedDescription)"
+                self?.onDebugLog?("Promise receive error: \(error.localizedDescription)")
+            } else {
+                self?.statusText = "Mail did not provide an .eml file."
+            }
+        }
+
+        return true
     }
 }
 
@@ -94,7 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let outputFolderField = NSTextField()
     private let markColorPopup = NSPopUpButton()
     private let dropView = EMLDropView()
+    private let debugTextView = NSTextView()
+    private let debugStatusLabel = NSTextField(labelWithString: "Ready")
+    private let mailExportQueue = DispatchQueue(label: "MailToNotes Mail export", qos: .userInitiated)
     private var queueProcess: Process?
+    private var isMailExportInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let titleLabel = NSTextField(labelWithString: "MailToNotes")
@@ -155,6 +255,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dropView.onDropFiles = { [weak self] urls in
             self?.convertDroppedEMLFiles(urls)
         }
+        dropView.onMailMessageDrop = { [weak self] in
+            self?.convertSelectedMailMessagesFromDrop() ?? false
+        }
+        dropView.onDebugLog = { [weak self] message in
+            self?.appendDebugLog(message)
+        }
 
         let saveButton = NSButton(title: "Save", target: self, action: #selector(saveSettings))
         saveButton.bezelStyle = .rounded
@@ -162,7 +268,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let reloadButton = NSButton(title: "Reload Visible Messages", target: self, action: #selector(reloadVisibleMessages))
         reloadButton.bezelStyle = .rounded
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 610))
+        let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 660, height: 680))
+        let tabView = NSTabView(frame: rootView.bounds)
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(tabView)
+
+        let settingsView = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 610))
+        let settingsTab = NSTabViewItem(identifier: "settings")
+        settingsTab.label = "Settings"
+        settingsTab.view = settingsView
+        tabView.addTabViewItem(settingsTab)
+
+        let debugTab = NSTabViewItem(identifier: "debug")
+        debugTab.label = "Debug"
+        debugTab.view = makeDebugView()
+        tabView.addTabViewItem(debugTab)
+
         [
             titleLabel,
             subtitleLabel,
@@ -181,12 +302,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reloadButton
         ].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview($0)
+            settingsView.addSubview($0)
         }
 
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
-            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            tabView.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 12),
+            tabView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 12),
+            tabView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -12),
+            tabView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -12),
+
+            titleLabel.topAnchor.constraint(equalTo: settingsView.topAnchor, constant: 24),
+            titleLabel.leadingAnchor.constraint(equalTo: settingsView.leadingAnchor, constant: 24),
 
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
@@ -196,12 +322,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             keywordInputStack.topAnchor.constraint(equalTo: keywordsLabel.bottomAnchor, constant: 8),
             keywordInputStack.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            keywordInputStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            keywordInputStack.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
             addKeywordButton.widthAnchor.constraint(equalToConstant: 32),
 
             scrollView.topAnchor.constraint(equalTo: keywordInputStack.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            scrollView.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
             scrollView.heightAnchor.constraint(equalToConstant: 150),
 
             keywordsStackView.topAnchor.constraint(equalTo: keywordsContainerView.topAnchor, constant: 8),
@@ -212,15 +338,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notesFolderLabel.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 18),
             notesFolderLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             notesFolderField.centerYAnchor.constraint(equalTo: notesFolderLabel.centerYAnchor),
-            notesFolderField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 150),
-            notesFolderField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            notesFolderField.leadingAnchor.constraint(equalTo: settingsView.leadingAnchor, constant: 150),
+            notesFolderField.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
 
             outputFolderLabel.topAnchor.constraint(equalTo: notesFolderLabel.bottomAnchor, constant: 18),
             outputFolderLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             outputFolderField.centerYAnchor.constraint(equalTo: outputFolderLabel.centerYAnchor),
             outputFolderField.leadingAnchor.constraint(equalTo: notesFolderField.leadingAnchor),
             chooseOutputFolderButton.centerYAnchor.constraint(equalTo: outputFolderField.centerYAnchor),
-            chooseOutputFolderButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            chooseOutputFolderButton.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
             outputFolderField.trailingAnchor.constraint(equalTo: chooseOutputFolderButton.leadingAnchor, constant: -8),
 
             markColorLabel.topAnchor.constraint(equalTo: outputFolderLabel.bottomAnchor, constant: 18),
@@ -230,24 +356,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             dropView.topAnchor.constraint(equalTo: markColorLabel.bottomAnchor, constant: 18),
             dropView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            dropView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            dropView.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
             dropView.heightAnchor.constraint(equalToConstant: 92),
 
-            saveButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            saveButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24),
+            saveButton.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
+            saveButton.bottomAnchor.constraint(equalTo: settingsView.bottomAnchor, constant: -24),
 
             reloadButton.trailingAnchor.constraint(equalTo: saveButton.leadingAnchor, constant: -12),
             reloadButton.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor)
         ])
 
         let window = NSWindow(
-            contentRect: contentView.frame,
+            contentRect: rootView.frame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "MailToNotes"
-        window.contentView = contentView
+        window.contentView = rootView
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
@@ -261,8 +387,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    private func makeDebugView() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 610))
+
+        debugStatusLabel.textColor = .secondaryLabelColor
+
+        debugTextView.isEditable = false
+        debugTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        debugTextView.textColor = .labelColor
+        debugTextView.backgroundColor = .textBackgroundColor
+        debugTextView.string = "Conversion logs will appear here.\n"
+
+        let debugScrollView = NSScrollView()
+        debugScrollView.borderType = .bezelBorder
+        debugScrollView.hasVerticalScroller = true
+        debugScrollView.documentView = debugTextView
+
+        let runQueuedButton = NSButton(
+            title: "Run Queued Conversion",
+            target: self,
+            action: #selector(runQueuedConversionFromDebug)
+        )
+        runQueuedButton.bezelStyle = .rounded
+
+        let openOutputButton = NSButton(
+            title: "Open Output Folder",
+            target: self,
+            action: #selector(openOutputFolder)
+        )
+        openOutputButton.bezelStyle = .rounded
+
+        let clearButton = NSButton(
+            title: "Clear Log",
+            target: self,
+            action: #selector(clearDebugLog)
+        )
+        clearButton.bezelStyle = .rounded
+
+        let buttonStack = NSStackView(views: [runQueuedButton, openOutputButton, clearButton])
+        buttonStack.orientation = .horizontal
+        buttonStack.spacing = 8
+        buttonStack.alignment = .centerY
+
+        [debugStatusLabel, debugScrollView, buttonStack].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview($0)
+        }
+
+        NSLayoutConstraint.activate([
+            debugStatusLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
+            debugStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            debugStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+
+            debugScrollView.topAnchor.constraint(equalTo: debugStatusLabel.bottomAnchor, constant: 12),
+            debugScrollView.leadingAnchor.constraint(equalTo: debugStatusLabel.leadingAnchor),
+            debugScrollView.trailingAnchor.constraint(equalTo: debugStatusLabel.trailingAnchor),
+            debugScrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor, constant: -16),
+
+            buttonStack.leadingAnchor.constraint(equalTo: debugStatusLabel.leadingAnchor),
+            buttonStack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -24)
+        ])
+
+        return view
+    }
+
     @objc private func saveSettings() {
         persistSettings(reloadVisibleMessages: true)
+    }
+
+    @objc private func runQueuedConversionFromDebug() {
+        guard queueProcess == nil else {
+            appendDebugLog("Conversion is already running.")
+            return
+        }
+
+        persistSettings(reloadVisibleMessages: false)
+
+        do {
+            appendDebugLog("Running queued conversion manually.")
+            try runQueueProcessor()
+        } catch {
+            appendDebugLog("Could not start conversion: \(error.localizedDescription)")
+            debugStatusLabel.stringValue = "Could not start conversion."
+        }
+    }
+
+    @objc private func openOutputFolder() {
+        let outputURL = URL(fileURLWithPath: outputFolderField.stringValue)
+        NSWorkspace.shared.open(outputURL)
+    }
+
+    @objc private func clearDebugLog() {
+        debugTextView.string = ""
     }
 
     private func persistSettings(reloadVisibleMessages shouldReload: Bool) {
@@ -392,11 +608,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             dropView.statusText = "Queued \(queuedCount) file\(queuedCount == 1 ? "" : "s"). Converting..."
+            appendDebugLog("Queued \(queuedCount) dropped .eml file\(queuedCount == 1 ? "" : "s").")
             try runQueueProcessor()
         } catch {
             dropView.statusText = "Could not start conversion: \(error.localizedDescription)"
-            NSLog("MailToNotes drop conversion failed: \(error.localizedDescription)")
+            appendDebugLog("Could not start conversion: \(error.localizedDescription)")
         }
+    }
+
+    private func convertSelectedMailMessagesFromDrop() -> Bool {
+        guard queueProcess == nil, !isMailExportInProgress else {
+            dropView.statusText = "Conversion is already running."
+            return true
+        }
+
+        isMailExportInProgress = true
+        dropView.statusText = "Receiving selected messages from Mail..."
+        appendDebugLog("Detected Mail message drop. Exporting selected Mail messages.")
+
+        mailExportQueue.async { [weak self] in
+            do {
+                let urls = try self?.exportSelectedMailMessages() ?? []
+                DispatchQueue.main.async {
+                    self?.isMailExportInProgress = false
+                    guard !urls.isEmpty else {
+                        self?.dropView.statusText = "Mail did not provide any selected messages."
+                        self?.appendDebugLog("Mail selection export returned no messages.")
+                        return
+                    }
+
+                    self?.convertDroppedEMLFiles(urls)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.isMailExportInProgress = false
+                    self?.dropView.statusText = "Could not export Mail selection. Open the Debug tab."
+                    self?.appendDebugLog("Could not export Mail selection: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        return true
+    }
+
+    private func exportSelectedMailMessages() throws -> [URL] {
+        let scriptSource = """
+        tell application "Mail"
+            set selectedMessages to selection
+            set exportedMessages to {}
+            repeat with eachMessage in selectedMessages
+                set messageSubject to subject of eachMessage
+                if messageSubject is missing value then set messageSubject to "Mail message"
+                set messageSource to source of eachMessage
+                set end of exportedMessages to {messageSubject, messageSource}
+            end repeat
+            return exportedMessages
+        end tell
+        """
+
+        guard let script = NSAppleScript(source: scriptSource) else {
+            throw MailToNotesHostError.mailSelectionExportFailed("Could not prepare the Mail export script.")
+        }
+
+        var scriptError: NSDictionary?
+        let result = script.executeAndReturnError(&scriptError)
+        if let scriptError {
+            throw MailToNotesHostError.mailSelectionExportFailed(appleScriptErrorDescription(scriptError))
+        }
+
+        guard result.numberOfItems > 0 else {
+            return []
+        }
+
+        let exportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MailToNotesMailDrop-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: exportDirectory,
+            withIntermediateDirectories: true
+        )
+
+        var urls: [URL] = []
+        for index in 1...result.numberOfItems {
+            guard let messageDescriptor = result.atIndex(index),
+                  let source = messageDescriptor.atIndex(2)?.stringValue,
+                  !source.isEmpty else {
+                continue
+            }
+
+            let subject = messageDescriptor.atIndex(1)?.stringValue ?? "Mail message"
+            let emlURL = exportDirectory.appendingPathComponent("\(uniqueFileBase(forSubject: subject)).eml")
+            try source.write(to: emlURL, atomically: true, encoding: .utf8)
+            urls.append(emlURL)
+        }
+
+        return urls
     }
 
     private func queueDroppedFiles(_ urls: [URL]) throws -> Int {
@@ -441,26 +746,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let processorURL = processorScriptURL() else {
             throw MailToNotesHostError.processorNotFound
         }
+        guard let pythonURL = pythonExecutableURL() else {
+            throw MailToNotesHostError.pythonNotFound
+        }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", processorURL.path]
+        process.executableURL = pythonURL
+        process.arguments = [processorURL.path]
+        process.environment = [
+            "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+            "PATH": "/opt/homebrew/opt/python@3.14/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        ]
+
+        debugStatusLabel.stringValue = "Conversion running..."
+        appendDebugLog("Using Python: \(pythonURL.path)")
+        appendDebugLog("Using processor: \(processorURL.path)")
 
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self?.appendDebugLog(output, includeTimestamp: false)
+            }
+        }
 
         process.terminationHandler = { [weak self] process in
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
+            pipe.fileHandleForReading.readabilityHandler = nil
 
             DispatchQueue.main.async {
                 self?.queueProcess = nil
                 if process.terminationStatus == 0 {
                     self?.dropView.statusText = "Conversion complete."
+                    self?.debugStatusLabel.stringValue = "Conversion complete."
+                    self?.appendDebugLog("Conversion finished successfully.")
                 } else {
-                    self?.dropView.statusText = "Conversion failed. Check Console for details."
-                    NSLog("MailToNotes queue processor failed: \(output)")
+                    self?.dropView.statusText = "Conversion failed. Open the Debug tab."
+                    self?.debugStatusLabel.stringValue = "Conversion failed."
+                    self?.appendDebugLog("Conversion failed with exit code \(process.terminationStatus).")
                 }
             }
         }
@@ -485,11 +813,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    private func pythonExecutableURL() -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            "/opt/homebrew/opt/python@3.14/bin/python3.14",
+            "/opt/homebrew/bin/python3",
+            "\(home)/.pyenv/shims/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3"
+        ]
+
+        return candidates
+            .map { URL(fileURLWithPath: $0) }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    private func appendDebugLog(_ message: String, includeTimestamp: Bool = true) {
+        let prefix = includeTimestamp ? "[\(Self.debugDateFormatter.string(from: Date()))] " : ""
+        let text = message.hasSuffix("\n") ? "\(prefix)\(message)" : "\(prefix)\(message)\n"
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            ]
+        )
+        debugTextView.textStorage?.append(attributed)
+        debugTextView.scrollRangeToVisible(NSRange(location: debugTextView.string.count, length: 0))
+    }
+
     private func uniqueFileBase(for sourceURL: URL) -> String {
         let dateStamp = Self.dropDateFormatter.string(from: Date())
         let name = sanitize(sourceURL.deletingPathExtension().lastPathComponent)
         let id = UUID().uuidString.prefix(8)
         return "\(dateStamp)-\(name)-\(id)"
+    }
+
+    private func uniqueFileBase(forSubject subject: String) -> String {
+        let dateStamp = Self.dropDateFormatter.string(from: Date())
+        let name = sanitize(subject)
+        let id = UUID().uuidString.prefix(8)
+        return "\(dateStamp)-\(name)-\(id)"
+    }
+
+    private func appleScriptErrorDescription(_ error: NSDictionary) -> String {
+        if let message = error[NSAppleScript.errorMessage] as? String {
+            return message
+        }
+
+        if let number = error[NSAppleScript.errorNumber] {
+            return "AppleScript failed with error \(number)."
+        }
+
+        return "AppleScript failed while reading the selected Mail messages."
     }
 
     private func sanitize(_ value: String) -> String {
@@ -512,6 +888,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter
     }()
+
+    private static let debugDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 }
 
 private struct DroppedMessageMetadata: Encodable {
@@ -524,11 +907,17 @@ private struct DroppedMessageMetadata: Encodable {
 
 private enum MailToNotesHostError: LocalizedError {
     case processorNotFound
+    case pythonNotFound
+    case mailSelectionExportFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .processorNotFound:
             return "The MailToNotes queue processor script could not be found."
+        case .pythonNotFound:
+            return "A Python 3 executable could not be found."
+        case .mailSelectionExportFailed(let message):
+            return message
         }
     }
 }

@@ -35,6 +35,7 @@ targets:
         CFBundlePackageType: APPL
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        NSAppleEventsUsageDescription: "MailToNotes needs access to Mail to convert messages dragged directly from Mail into PDFs."
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
