@@ -1,6 +1,8 @@
 property repoPath : "/Users/david/git/eml-to-pdf-creator"
 property pythonPath : "/opt/homebrew/opt/python@3.14/bin/python3.14"
 property notesFolderName : "Purchases"
+property createAppleNotes : false
+property attachPdfLinkToNote : true
 
 on run {input, parameters}
     if input is {} then
@@ -39,21 +41,24 @@ on run {input, parameters}
 
         do shell script quoted form of pythonPath & " " & quoted form of (repoPath & "/eml_to_image.py") & " " & quoted form of emlPath & " -o " & quoted form of outputDir
 
-        my createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
+        if createAppleNotes then
+            my createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
+        end if
     end repeat
 
-    display notification "Converted " & (count of input) & " Mail message(s) to Apple Notes" with title "Mail to Notes"
+    display notification "Converted " & (count of input) & " Mail message(s) to PDF" with title "Mail to PDF"
     return input
 end run
 
 on createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
     set noteTitle to "Purchase - " & messageSubject
-    set pdfUrl to "file://" & my replaceText(pdfPath, " ", "%20")
+    set pdfUrl to my fileUrlForPath(pdfPath)
+    set pdfLinkPath to my createWeblocFile(pdfPath, pdfUrl)
     set noteBody to "<html><body>" & ¬
-        "<h1>" & my escapeHtml(messageSubject) & "</h1>" & ¬
-        "<p><strong>From:</strong> " & my escapeHtml(messageSender) & "</p>" & ¬
-        "<p><strong>Date:</strong> " & my escapeHtml(messageDate as string) & "</p>" & ¬
-        "<p><strong>PDF:</strong> <a href=\"" & pdfUrl & "\">" & my escapeHtml(pdfPath) & "</a></p>" & ¬
+        "<p><b>Subject:</b> " & my escapeHtml(messageSubject) & "</p>" & ¬
+        "<p><b>From:</b> " & my escapeHtml(messageSender) & "</p>" & ¬
+        "<p><b>Date:</b> " & my escapeHtml(messageDate as string) & "</p>" & ¬
+        "<p><b>PDF:</b> <a href=\"" & my escapeHtml(pdfUrl) & "\">Open PDF</a></p>" & ¬
         "</body></html>"
 
     tell application "Notes"
@@ -64,12 +69,24 @@ on createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
         set targetFolder to folder notesFolderName of default account
         set newNote to make new note at targetFolder with properties {name:noteTitle, body:noteBody}
 
-        try
-            set pdfAlias to POSIX file pdfPath as alias
-            make new attachment at end of attachments of newNote with data pdfAlias
-        end try
+        if attachPdfLinkToNote then
+            try
+                set pdfLinkAlias to POSIX file pdfLinkPath as alias
+                make new attachment at end of attachments of newNote with data pdfLinkAlias
+            end try
+        end if
     end tell
 end createPurchaseNote
+
+on fileUrlForPath(posixPath)
+    return do shell script quoted form of pythonPath & " -c " & quoted form of "from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().as_uri())" & " " & quoted form of posixPath
+end fileUrlForPath
+
+on createWeblocFile(pdfPath, pdfUrl)
+    set linkPath to pdfPath & ".webloc"
+    do shell script quoted form of pythonPath & " -c " & quoted form of "import plistlib, sys; plistlib.dump({'URL': sys.argv[1]}, open(sys.argv[2], 'wb'))" & " " & quoted form of pdfUrl & " " & quoted form of linkPath
+    return linkPath
+end createWeblocFile
 
 on uniqueFileBase(messageDate, messageSubject, messageId)
     set dateStamp to my formatDateStamp(messageDate)

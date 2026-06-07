@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert MailKit queued EML files to PDFs and Apple Notes."""
+"""Convert MailKit queued EML files to PDFs."""
 
 from __future__ import annotations
 
@@ -34,6 +34,8 @@ SETTINGS_PLIST = (
     / "com.local.mailtonotes.settings.plist"
 )
 DEFAULT_NOTES_FOLDER = "Purchases"
+CREATE_APPLE_NOTES = False
+ATTACH_PDF_LINK_TO_NOTE = True
 
 sys.path.insert(0, str(next(
     path for path in [REPO_ROOT, SCRIPT_DIR, SCRIPT_DIR.parent]
@@ -60,10 +62,13 @@ def main() -> int:
         print(f"Processing {eml_path.name}")
 
         convert_eml(str(eml_path), str(output_dir))
-        try:
-            create_note(metadata, pdf_path)
-        except Exception as error:
-            print(f"Warning: PDF was created but Apple Notes update failed: {error}")
+        if CREATE_APPLE_NOTES:
+            try:
+                create_note(metadata, pdf_path)
+            except Exception as error:
+                print(f"Warning: PDF was created but Apple Notes update failed: {error}")
+        else:
+            print("Apple Notes creation is currently disabled; PDF only.")
 
         processed_subjects.append(metadata.get("subject") or eml_path.stem)
 
@@ -93,12 +98,13 @@ def create_note(metadata: dict[str, str], pdf_path: Path) -> None:
     subject = metadata.get("subject") or pdf_path.stem
     sender = metadata.get("from") or "Unknown"
     note_title = f"Purchase - {subject}"
-    pdf_url = pdf_path.as_uri()
+    pdf_url = pdf_path.resolve().as_uri()
+    pdf_link_path = create_pdf_link_file(pdf_path)
     body = (
         "<html><body>"
-        f"<h1>{html.escape(subject)}</h1>"
-        f"<p><strong>From:</strong> {html.escape(sender)}</p>"
-        f'<p><strong>PDF:</strong> <a href="{html.escape(pdf_url)}">{html.escape(str(pdf_path))}</a></p>'
+        f"<p><b>Subject:</b> {html.escape(subject)}</p>"
+        f"<p><b>From:</b> {html.escape(sender)}</p>"
+        f'<p><b>PDF:</b> <a href="{html.escape(pdf_url)}">Open PDF</a></p>'
         "</body></html>"
     )
 
@@ -107,7 +113,8 @@ on run argv
     set notesFolderName to item 1 of argv
     set noteTitle to item 2 of argv
     set noteBody to item 3 of argv
-    set pdfPath to item 4 of argv
+    set pdfLinkPath to item 4 of argv
+    set attachPdfLinkToNote to item 5 of argv
 
     tell application "Notes"
         if not (exists folder notesFolderName of default account) then
@@ -117,18 +124,36 @@ on run argv
         set targetFolder to folder notesFolderName of default account
         set newNote to make new note at targetFolder with properties {name:noteTitle, body:noteBody}
 
-        try
-            set pdfAlias to POSIX file pdfPath as alias
-            make new attachment at end of attachments of newNote with data pdfAlias
-        end try
+        if attachPdfLinkToNote is "true" then
+            try
+                set pdfLinkAlias to POSIX file pdfLinkPath as alias
+                make new attachment at end of attachments of newNote with data pdfLinkAlias
+            end try
+        end if
     end tell
 end run
 """
 
     subprocess.run(
-        ["osascript", "-e", script, notes_folder(), note_title, body, str(pdf_path)],
+        [
+            "osascript",
+            "-e",
+            script,
+            notes_folder(),
+            note_title,
+            body,
+            str(pdf_link_path),
+            str(ATTACH_PDF_LINK_TO_NOTE).lower(),
+        ],
         check=True,
     )
+
+
+def create_pdf_link_file(pdf_path: Path) -> Path:
+    link_path = pdf_path.with_name(f"{pdf_path.name}.webloc")
+    with link_path.open("wb") as file:
+        plistlib.dump({"URL": pdf_path.resolve().as_uri()}, file)
+    return link_path
 
 
 def notes_folder() -> str:
@@ -162,7 +187,7 @@ def notify_processed(subjects: list[str]) -> None:
         message = truncate(subjects[0])
     else:
         title = f"{len(subjects)} emails processed"
-        message = "Created PDFs and Apple Notes."
+        message = "Created PDFs."
 
     script = """
 on run argv

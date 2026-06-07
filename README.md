@@ -22,7 +22,7 @@ playwright install chromium
 
 ## Usage
 
-### Apple Mail to Apple Notes
+### Apple Mail to PDF
 
 Use `Convert Mail Selection to Notes.applescript` as a macOS Quick Action:
 
@@ -30,13 +30,13 @@ Use `Convert Mail Selection to Notes.applescript` as a macOS Quick Action:
 2. Set **Workflow receives current** to **no input** in **Mail**
 3. Add **Run AppleScript**
 4. Paste the contents of `Convert Mail Selection to Notes.applescript`
-5. Save it as **Convert Mail to Notes**
+5. Save it as **Convert Mail to PDF**
 
-Then select one or more messages in Apple Mail and run **Mail > Services > Convert Mail to Notes**. The script saves each message as an `.eml`, creates a PDF in `output/`, and creates a note in the `Purchases` folder in Apple Notes.
+Then select one or more messages in Apple Mail and run **Mail > Services > Convert Mail to PDF**. The script saves each message as an `.eml` and creates a PDF in `output/`. Apple Notes creation is temporarily disabled.
 
 ### MailKit Extension
 
-The `mailkit/` folder contains a MailKit prototype for purchase-like incoming messages. MailKit does not add a custom right-click command for selected messages; it runs as Mail downloads messages. The extension queues matching raw emails, then the processor converts them to PDFs and creates Apple Notes.
+The `mailkit/` folder contains a MailKit prototype for purchase-like incoming messages. MailKit does not add a custom right-click command for selected messages; it runs as Mail downloads messages. The extension queues matching raw emails, then the processor converts them to PDFs. Apple Notes creation is temporarily disabled.
 
 ```bash
 # Requires the Xcode license to be accepted first.
