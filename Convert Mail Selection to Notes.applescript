@@ -20,6 +20,11 @@ on run {input, parameters}
     set outputDir to repoPath & "/output"
     do shell script "mkdir -p " & quoted form of inputDir & " " & quoted form of outputDir
 
+    set defaultNotesButton to "PDF Only"
+    if createAppleNotes then set defaultNotesButton to "Send to Notes"
+    set notesChoice to button returned of (display dialog "Send converted PDFs to Apple Notes for this run?" & return & return & "Choose PDF Only if Notes is crashing. You can still open the PDFs from the output folder." buttons {"PDF Only", "Send to Notes"} default button defaultNotesButton)
+    set createNotesForRun to notesChoice is "Send to Notes"
+
     repeat with mailMessage in input
         tell application "Mail"
             set messageSubject to subject of mailMessage
@@ -41,12 +46,16 @@ on run {input, parameters}
 
         do shell script quoted form of pythonPath & " " & quoted form of (repoPath & "/eml_to_image.py") & " " & quoted form of emlPath & " -o " & quoted form of outputDir
 
-        if createAppleNotes then
+        if createNotesForRun then
             my createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
         end if
     end repeat
 
     display notification "Converted " & (count of input) & " Mail message(s) to PDF" with title "Mail to PDF"
+    set completionChoice to button returned of (display dialog "Converted " & (count of input) & " Mail message(s) to PDF." & return & return & "Output folder: " & outputDir buttons {"Done", "Open Output Folder"} default button "Open Output Folder")
+    if completionChoice is "Open Output Folder" then
+        do shell script "open " & quoted form of outputDir
+    end if
     return input
 end run
 

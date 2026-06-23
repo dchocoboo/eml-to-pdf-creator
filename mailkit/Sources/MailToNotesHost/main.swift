@@ -187,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let keywordsContainerView = NSView()
     private let keywordsStackView = NSStackView()
     private let notesFolderField = NSTextField()
+    private let createAppleNotesButton = NSButton(checkboxWithTitle: "Send PDFs to Apple Notes", target: nil, action: nil)
     private let outputFolderField = NSTextField()
     private let markColorPopup = NSPopUpButton()
     private let dropView = EMLDropView()
@@ -237,6 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let notesFolderLabel = NSTextField(labelWithString: "Notes Folder")
         notesFolderField.stringValue = MailToNotesSettings.notesFolder
 
+        createAppleNotesButton.state = MailToNotesSettings.createAppleNotes ? .on : .off
+
         let outputFolderLabel = NSTextField(labelWithString: "Output Folder")
         outputFolderField.stringValue = MailToNotesSettings.outputDirectory
         outputFolderField.placeholderString = MailToNotesSettings.defaultOutputDirectory
@@ -247,6 +250,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(chooseOutputFolder)
         )
         chooseOutputFolderButton.bezelStyle = .rounded
+
+        let openOutputFolderButton = NSButton(
+            title: "Open",
+            target: self,
+            action: #selector(openOutputFolder)
+        )
+        openOutputFolderButton.bezelStyle = .rounded
 
         let markColorLabel = NSTextField(labelWithString: "Mail Color")
         markColorPopup.addItems(withTitles: ["green", "blue", "gray", "orange", "purple", "red", "yellow"])
@@ -292,9 +302,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scrollView,
             notesFolderLabel,
             notesFolderField,
+            createAppleNotesButton,
             outputFolderLabel,
             outputFolderField,
             chooseOutputFolderButton,
+            openOutputFolderButton,
             markColorLabel,
             markColorPopup,
             dropView,
@@ -341,13 +353,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notesFolderField.leadingAnchor.constraint(equalTo: settingsView.leadingAnchor, constant: 150),
             notesFolderField.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
 
-            outputFolderLabel.topAnchor.constraint(equalTo: notesFolderLabel.bottomAnchor, constant: 18),
+            createAppleNotesButton.topAnchor.constraint(equalTo: notesFolderLabel.bottomAnchor, constant: 14),
+            createAppleNotesButton.leadingAnchor.constraint(equalTo: notesFolderField.leadingAnchor),
+
+            outputFolderLabel.topAnchor.constraint(equalTo: createAppleNotesButton.bottomAnchor, constant: 18),
             outputFolderLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             outputFolderField.centerYAnchor.constraint(equalTo: outputFolderLabel.centerYAnchor),
             outputFolderField.leadingAnchor.constraint(equalTo: notesFolderField.leadingAnchor),
             chooseOutputFolderButton.centerYAnchor.constraint(equalTo: outputFolderField.centerYAnchor),
             chooseOutputFolderButton.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
-            outputFolderField.trailingAnchor.constraint(equalTo: chooseOutputFolderButton.leadingAnchor, constant: -8),
+            openOutputFolderButton.centerYAnchor.constraint(equalTo: outputFolderField.centerYAnchor),
+            openOutputFolderButton.trailingAnchor.constraint(equalTo: chooseOutputFolderButton.leadingAnchor, constant: -8),
+            outputFolderField.trailingAnchor.constraint(equalTo: openOutputFolderButton.leadingAnchor, constant: -8),
 
             markColorLabel.topAnchor.constraint(equalTo: outputFolderLabel.bottomAnchor, constant: 18),
             markColorLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
@@ -473,7 +490,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openOutputFolder() {
-        let outputURL = URL(fileURLWithPath: outputFolderField.stringValue)
+        let outputPath = MailToNotesSettings.normalizeOutputDirectory(outputFolderField.stringValue)
+        outputFolderField.stringValue = outputPath
+        let outputURL = URL(fileURLWithPath: outputPath, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        } catch {
+            appendDebugLog("Could not create output folder: \(error.localizedDescription)")
+            return
+        }
         NSWorkspace.shared.open(outputURL)
     }
 
@@ -485,6 +510,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MailToNotesSettings.save(
             keywords: keywords,
             notesFolder: notesFolderField.stringValue,
+            createAppleNotes: createAppleNotesButton.state == .on,
             markColor: markColorPopup.titleOfSelectedItem ?? MailToNotesSettings.defaultMarkColor,
             outputDirectory: outputFolderField.stringValue
         )

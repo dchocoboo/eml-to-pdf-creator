@@ -34,7 +34,7 @@ SETTINGS_PLIST = (
     / "com.local.mailtonotes.settings.plist"
 )
 DEFAULT_NOTES_FOLDER = "Purchases"
-CREATE_APPLE_NOTES = False
+DEFAULT_CREATE_APPLE_NOTES = False
 ATTACH_PDF_LINK_TO_NOTE = True
 
 sys.path.insert(0, str(next(
@@ -62,7 +62,7 @@ def main() -> int:
         print(f"Processing {eml_path.name}")
 
         convert_eml(str(eml_path), str(output_dir))
-        if CREATE_APPLE_NOTES:
+        if create_apple_notes():
             try:
                 create_note(metadata, pdf_path)
             except Exception as error:
@@ -159,6 +159,11 @@ def create_pdf_link_file(pdf_path: Path) -> Path:
 def notes_folder() -> str:
     value = str(read_settings().get("notesFolder", "")).strip()
     return value or DEFAULT_NOTES_FOLDER
+
+
+def create_apple_notes() -> bool:
+    value = read_settings().get("createAppleNotes", DEFAULT_CREATE_APPLE_NOTES)
+    return value is True
 
 
 def output_directory() -> Path:

@@ -11,7 +11,7 @@ Mail downloads a purchase-like message
 -> MailKit extension receives MEMessage
 -> extension writes rawData to ~/Library/Containers/com.local.mailtonotes.extension/Data/Library/Application Support/MailToNotes/Incoming
 -> process_mailkit_queue.py converts queued .eml files to PDFs
--> Apple Notes creation is temporarily disabled
+-> Apple Notes creation runs only when enabled in MailToNotes.app
 ```
 
 ## Build
@@ -39,7 +39,9 @@ Mail > Settings > Extensions
 Open `MailToNotes.app` to configure how the extension behaves:
 
 - `Keywords`: words matched against the subject and sender.
-- `Notes Folder`: currently unused while Apple Notes creation is disabled.
+- `Notes Folder`: Apple Notes destination when `Send PDFs to Apple Notes` is enabled.
+- `Send PDFs to Apple Notes`: off by default; leave this off if Notes is crashing.
+- `Output Folder`: where PDFs are written. Use `Open` to reveal it in Finder.
 - `Mail Color`: background color applied to matched messages in Mail.
 
 Click `Save` after changing settings. The app stores settings at:
@@ -56,7 +58,7 @@ Run this when messages have been queued:
 mailkit/Scripts/process_mailkit_queue.py
 ```
 
-The processor reuses `eml_to_image.py`, creates PDFs in the configured output folder, then removes processed queue files. Apple Notes creation is temporarily disabled.
+The processor reuses `eml_to_image.py`, creates PDFs in the configured output folder, optionally creates Apple Notes when enabled, then removes processed queue files.
 
 ## Purchase Matching
 

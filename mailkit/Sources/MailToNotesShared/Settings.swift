@@ -12,6 +12,7 @@ enum MailToNotesSettings {
         "charged"
     ]
     static let defaultNotesFolder = "Purchases"
+    static let defaultCreateAppleNotes = false
     static let defaultMarkColor = "green"
     static let defaultOutputDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Documents", isDirectory: true)
@@ -21,6 +22,7 @@ enum MailToNotesSettings {
     struct Config: Codable {
         var keywords: [String]
         var notesFolder: String
+        var createAppleNotes: Bool?
         var markColor: String
         var outputDirectory: String?
     }
@@ -67,6 +69,10 @@ enum MailToNotesSettings {
         load().notesFolder
     }
 
+    static var createAppleNotes: Bool {
+        load().createAppleNotes ?? defaultCreateAppleNotes
+    }
+
     static var markColor: String {
         load().markColor
     }
@@ -78,12 +84,14 @@ enum MailToNotesSettings {
     static func save(
         keywords: [String],
         notesFolder: String,
+        createAppleNotes: Bool,
         markColor: String,
         outputDirectory: String
     ) {
         let config = Config(
             keywords: normalizeKeywords(keywords),
             notesFolder: normalizeNotesFolder(notesFolder),
+            createAppleNotes: createAppleNotes,
             markColor: normalizeMarkColor(markColor),
             outputDirectory: normalizeOutputDirectory(outputDirectory)
         )
@@ -111,6 +119,7 @@ enum MailToNotesSettings {
             save(
                 keywords: legacyConfig.keywords,
                 notesFolder: legacyConfig.notesFolder,
+                createAppleNotes: legacyConfig.createAppleNotes ?? defaultCreateAppleNotes,
                 markColor: legacyConfig.markColor,
                 outputDirectory: normalizeOutputDirectory(legacyConfig.outputDirectory)
             )
@@ -120,6 +129,7 @@ enum MailToNotesSettings {
         return Config(
             keywords: defaultKeywords,
             notesFolder: defaultNotesFolder,
+            createAppleNotes: defaultCreateAppleNotes,
             markColor: defaultMarkColor,
             outputDirectory: defaultOutputDirectory
         )
@@ -149,6 +159,7 @@ enum MailToNotesSettings {
         Config(
             keywords: normalizeKeywords(config.keywords),
             notesFolder: normalizeNotesFolder(config.notesFolder),
+            createAppleNotes: config.createAppleNotes ?? defaultCreateAppleNotes,
             markColor: normalizeMarkColor(config.markColor),
             outputDirectory: normalizeOutputDirectory(config.outputDirectory)
         )
