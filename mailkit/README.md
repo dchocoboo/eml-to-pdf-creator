@@ -40,7 +40,7 @@ Open `MailToNotes.app` to configure how the extension behaves:
 
 - `Keywords`: words matched against the subject and sender.
 - `Notes Folder`: Apple Notes destination when `Send PDFs to Apple Notes` is enabled.
-- `Send PDFs to Apple Notes`: off by default; leave this off if Notes is crashing.
+- `Send PDFs to Apple Notes`: off by default. When a shortcut named `MailToNotes Create Note` exists, PDFs are sent to that shortcut; otherwise notes are created without PDF attachments.
 - `Output Folder`: where PDFs are written. Use `Open` to reveal it in Finder.
 - `Mail Color`: background color applied to matched messages in Mail.
 
@@ -58,7 +58,7 @@ Run this when messages have been queued:
 mailkit/Scripts/process_mailkit_queue.py
 ```
 
-The processor reuses `eml_to_image.py`, creates PDFs in the configured output folder, optionally creates Apple Notes when enabled, then removes processed queue files.
+The processor reuses `eml_to_image.py`, creates PDFs in the configured output folder, optionally sends PDFs to the `MailToNotes Create Note` shortcut, then removes processed queue files. If that shortcut does not exist, it creates text-only Apple Notes instead. See the main README's **Apple Notes Shortcut** section for the exact Shortcuts setup and export instructions.
 
 ## Purchase Matching
 

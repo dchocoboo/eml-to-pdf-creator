@@ -948,8 +948,27 @@ private enum MailToNotesHostError: LocalizedError {
     }
 }
 
+private func configureMainMenu() {
+    let mainMenu = NSMenu()
+    let appMenuItem = NSMenuItem()
+    mainMenu.addItem(appMenuItem)
+
+    let appMenu = NSMenu()
+    let quitTitle = "Quit \(ProcessInfo.processInfo.processName)"
+    appMenu.addItem(
+        NSMenuItem(
+            title: quitTitle,
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+    )
+    appMenuItem.submenu = appMenu
+    NSApp.mainMenu = mainMenu
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)
+configureMainMenu()
 app.run()

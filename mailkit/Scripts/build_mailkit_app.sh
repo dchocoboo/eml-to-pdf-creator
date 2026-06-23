@@ -36,6 +36,9 @@ xcodebuild \
     build
 
 if [[ "${1:-}" == "--install" ]]; then
+    /usr/bin/osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+    sleep 1
+
     rm -rf "/Applications/$APP_NAME.app"
     cp -R "$BUILT_APP" "/Applications/$APP_NAME.app"
 

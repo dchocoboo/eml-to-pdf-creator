@@ -6,8 +6,11 @@ from __future__ import annotations
 import html
 import json
 import plistlib
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,7 +38,9 @@ SETTINGS_PLIST = (
 )
 DEFAULT_NOTES_FOLDER = "Purchases"
 DEFAULT_CREATE_APPLE_NOTES = False
-ATTACH_PDF_LINK_TO_NOTE = True
+ATTACH_PDF_TO_NOTE = False
+USE_SHORTCUTS_FOR_NOTES = True
+DEFAULT_NOTES_SHORTCUT = "MailToNotes Create Note"
 
 sys.path.insert(0, str(next(
     path for path in [REPO_ROOT, SCRIPT_DIR, SCRIPT_DIR.parent]
@@ -96,15 +101,17 @@ def read_metadata(eml_path: Path) -> dict[str, str]:
 
 def create_note(metadata: dict[str, str], pdf_path: Path) -> None:
     subject = metadata.get("subject") or pdf_path.stem
-    sender = metadata.get("from") or "Unknown"
     note_title = f"Purchase - {subject}"
-    pdf_url = pdf_path.resolve().as_uri()
-    pdf_link_path = create_pdf_link_file(pdf_path)
+
+    if USE_SHORTCUTS_FOR_NOTES and shortcut_exists(DEFAULT_NOTES_SHORTCUT):
+        create_note_with_shortcut(pdf_path, note_title)
+        return
+
+    sender = metadata.get("from") or "Unknown"
     body = (
         "<html><body>"
         f"<p><b>Subject:</b> {html.escape(subject)}</p>"
         f"<p><b>From:</b> {html.escape(sender)}</p>"
-        f'<p><b>PDF:</b> <a href="{html.escape(pdf_url)}">Open PDF</a></p>'
         "</body></html>"
     )
 
@@ -113,8 +120,8 @@ on run argv
     set notesFolderName to item 1 of argv
     set noteTitle to item 2 of argv
     set noteBody to item 3 of argv
-    set pdfLinkPath to item 4 of argv
-    set attachPdfLinkToNote to item 5 of argv
+    set pdfPath to item 4 of argv
+    set attachPdfToNote to item 5 of argv
 
     tell application "Notes"
         if not (exists folder notesFolderName of default account) then
@@ -124,10 +131,10 @@ on run argv
         set targetFolder to folder notesFolderName of default account
         set newNote to make new note at targetFolder with properties {name:noteTitle, body:noteBody}
 
-        if attachPdfLinkToNote is "true" then
+        if attachPdfToNote is "true" then
             try
-                set pdfLinkAlias to POSIX file pdfLinkPath as alias
-                make new attachment at end of attachments of newNote with data pdfLinkAlias
+                set pdfAlias to POSIX file pdfPath as alias
+                make new attachment at end of attachments of newNote with data pdfAlias
             end try
         end if
     end tell
@@ -142,18 +149,49 @@ end run
             notes_folder(),
             note_title,
             body,
-            str(pdf_link_path),
-            str(ATTACH_PDF_LINK_TO_NOTE).lower(),
+            str(pdf_path),
+            str(ATTACH_PDF_TO_NOTE).lower(),
         ],
         check=True,
     )
 
 
-def create_pdf_link_file(pdf_path: Path) -> Path:
-    link_path = pdf_path.with_name(f"{pdf_path.name}.webloc")
-    with link_path.open("wb") as file:
-        plistlib.dump({"URL": pdf_path.resolve().as_uri()}, file)
-    return link_path
+def create_note_with_shortcut(pdf_path: Path, note_title: str) -> None:
+    shortcut_pdf_path = copy_pdf_for_shortcut(pdf_path, note_title)
+    subprocess.run(
+        [
+            "shortcuts",
+            "run",
+            DEFAULT_NOTES_SHORTCUT,
+            "--input-path",
+            str(shortcut_pdf_path),
+        ],
+        check=True,
+    )
+
+
+def copy_pdf_for_shortcut(pdf_path: Path, note_title: str) -> Path:
+    safe_stem = re.sub(r'[:/\\*?"<>|\r\n\t]', "-", note_title)
+    safe_stem = re.sub(r"\s+", " ", safe_stem).strip() or pdf_path.stem
+    safe_stem = safe_stem[:160]
+    shortcut_dir = Path(tempfile.mkdtemp(prefix="mailtonotes-shortcut-"))
+    shortcut_pdf_path = shortcut_dir / f"{safe_stem}.pdf"
+    shutil.copy2(pdf_path, shortcut_pdf_path)
+    return shortcut_pdf_path
+
+
+def shortcut_exists(shortcut_name: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["shortcuts", "list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+    return any(line.strip() == shortcut_name for line in result.stdout.splitlines())
 
 
 def notes_folder() -> str:

@@ -1,6 +1,8 @@
 import Foundation
 
 enum MailToNotesSettings {
+    static let hostBundleIdentifier = "com.local.mailtonotes"
+    static let extensionBundleIdentifier = "com.local.mailtonotes.extension"
     static let defaultKeywords = [
         "receipt",
         "invoice",
@@ -40,19 +42,14 @@ enum MailToNotesSettings {
     }
 
     static var sharedLibraryDirectory: URL {
-        if Bundle.main.bundleIdentifier == "com.local.mailtonotes" {
-            return FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library", isDirectory: true)
-                .appendingPathComponent("Containers", isDirectory: true)
-                .appendingPathComponent("com.local.mailtonotes.extension", isDirectory: true)
-                .appendingPathComponent("Data", isDirectory: true)
-                .appendingPathComponent("Library", isDirectory: true)
+        if Bundle.main.bundleIdentifier == extensionBundleIdentifier {
+            return FileManager.default.urls(
+                for: .libraryDirectory,
+                in: .userDomainMask
+            )[0]
         }
 
-        return FileManager.default.urls(
-            for: .libraryDirectory,
-            in: .userDomainMask
-        )[0]
+        return containerLibraryDirectory(for: extensionBundleIdentifier)
     }
 
     static var applicationSupportDirectory: URL {
@@ -136,23 +133,29 @@ enum MailToNotesSettings {
     }
 
     private static func loadPreferencesConfig() -> Config? {
-        do {
-            let data = try Data(contentsOf: preferencesURL)
-            let config = try PropertyListDecoder().decode(Config.self, from: data)
-            return normalizedConfig(config)
-        } catch {
-            return nil
+        for url in candidatePreferencesURLs {
+            do {
+                let data = try Data(contentsOf: url)
+                let config = try PropertyListDecoder().decode(Config.self, from: data)
+                return normalizedConfig(config)
+            } catch {
+                continue
+            }
         }
+        return nil
     }
 
     private static func loadLegacyConfig() -> Config? {
-        do {
-            let data = try Data(contentsOf: configURL)
-            let config = try JSONDecoder().decode(Config.self, from: data)
-            return normalizedConfig(config)
-        } catch {
-            return nil
+        for url in candidateConfigURLs {
+            do {
+                let data = try Data(contentsOf: url)
+                let config = try JSONDecoder().decode(Config.self, from: data)
+                return normalizedConfig(config)
+            } catch {
+                continue
+            }
         }
+        return nil
     }
 
     private static func normalizedConfig(_ config: Config) -> Config {
@@ -186,5 +189,48 @@ enum MailToNotesSettings {
         let trimmed = outputDirectory?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? defaultOutputDirectory : (trimmed as NSString).expandingTildeInPath
+    }
+
+    private static var candidatePreferencesURLs: [URL] {
+        uniqueURLs([
+            preferencesURL,
+            preferencesURL(in: containerLibraryDirectory(for: hostBundleIdentifier))
+        ])
+    }
+
+    private static var candidateConfigURLs: [URL] {
+        uniqueURLs([
+            configURL,
+            configURL(in: containerLibraryDirectory(for: hostBundleIdentifier))
+        ])
+    }
+
+    private static func preferencesURL(in libraryDirectory: URL) -> URL {
+        libraryDirectory
+            .appendingPathComponent("Preferences", isDirectory: true)
+            .appendingPathComponent("com.local.mailtonotes.settings.plist")
+    }
+
+    private static func configURL(in libraryDirectory: URL) -> URL {
+        libraryDirectory
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("MailToNotes", isDirectory: true)
+            .appendingPathComponent("config.json")
+    }
+
+    private static func containerLibraryDirectory(for bundleIdentifier: String) -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Containers", isDirectory: true)
+            .appendingPathComponent(bundleIdentifier, isDirectory: true)
+            .appendingPathComponent("Data", isDirectory: true)
+            .appendingPathComponent("Library", isDirectory: true)
+    }
+
+    private static func uniqueURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return urls.filter { url in
+            seen.insert(url.standardizedFileURL.path).inserted
+        }
     }
 }

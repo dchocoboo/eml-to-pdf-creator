@@ -2,7 +2,9 @@ property repoPath : "/Users/david/git/eml-to-pdf-creator"
 property pythonPath : "/opt/homebrew/opt/python@3.14/bin/python3.14"
 property notesFolderName : "Purchases"
 property createAppleNotes : false
-property attachPdfLinkToNote : true
+property attachPdfToNote : false
+property useShortcutsForNotes : true
+property notesShortcutName : "MailToNotes Create Note"
 
 on run {input, parameters}
     if input is {} then
@@ -61,13 +63,16 @@ end run
 
 on createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
     set noteTitle to "Purchase - " & messageSubject
-    set pdfUrl to my fileUrlForPath(pdfPath)
-    set pdfLinkPath to my createWeblocFile(pdfPath, pdfUrl)
+
+    if useShortcutsForNotes and my shortcutExists(notesShortcutName) then
+        my createPurchaseNoteWithShortcut(pdfPath, noteTitle)
+        return
+    end if
+
     set noteBody to "<html><body>" & ¬
         "<p><b>Subject:</b> " & my escapeHtml(messageSubject) & "</p>" & ¬
         "<p><b>From:</b> " & my escapeHtml(messageSender) & "</p>" & ¬
         "<p><b>Date:</b> " & my escapeHtml(messageDate as string) & "</p>" & ¬
-        "<p><b>PDF:</b> <a href=\"" & my escapeHtml(pdfUrl) & "\">Open PDF</a></p>" & ¬
         "</body></html>"
 
     tell application "Notes"
@@ -78,24 +83,34 @@ on createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
         set targetFolder to folder notesFolderName of default account
         set newNote to make new note at targetFolder with properties {name:noteTitle, body:noteBody}
 
-        if attachPdfLinkToNote then
+        if attachPdfToNote then
             try
-                set pdfLinkAlias to POSIX file pdfLinkPath as alias
-                make new attachment at end of attachments of newNote with data pdfLinkAlias
+                set pdfAlias to POSIX file pdfPath as alias
+                make new attachment at end of attachments of newNote with data pdfAlias
             end try
         end if
     end tell
 end createPurchaseNote
 
-on fileUrlForPath(posixPath)
-    return do shell script quoted form of pythonPath & " -c " & quoted form of "from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().as_uri())" & " " & quoted form of posixPath
-end fileUrlForPath
+on createPurchaseNoteWithShortcut(pdfPath, noteTitle)
+    set shortcutPdfPath to my copyPdfForShortcut(pdfPath, noteTitle)
+    do shell script "/usr/bin/shortcuts run " & quoted form of notesShortcutName & " --input-path " & quoted form of shortcutPdfPath
+end createPurchaseNoteWithShortcut
 
-on createWeblocFile(pdfPath, pdfUrl)
-    set linkPath to pdfPath & ".webloc"
-    do shell script quoted form of pythonPath & " -c " & quoted form of "import plistlib, sys; plistlib.dump({'URL': sys.argv[1]}, open(sys.argv[2], 'wb'))" & " " & quoted form of pdfUrl & " " & quoted form of linkPath
-    return linkPath
-end createWeblocFile
+on copyPdfForShortcut(pdfPath, noteTitle)
+    set scriptText to "import re, shutil, sys, tempfile; from pathlib import Path; src = Path(sys.argv[1]); title = sys.argv[2]; stem = re.sub(r'[:/\\\\*?\"<>|\\r\\n\\t]', '-', title); stem = re.sub(r'\\s+', ' ', stem).strip() or src.stem; stem = stem[:160]; dst = Path(tempfile.mkdtemp(prefix='mailtonotes-shortcut-')) / (stem + '.pdf'); shutil.copy2(src, dst); print(dst)"
+    return do shell script quoted form of pythonPath & " -c " & quoted form of scriptText & " " & quoted form of pdfPath & " " & quoted form of noteTitle
+end copyPdfForShortcut
+
+on shortcutExists(shortcutName)
+    try
+        set shortcutList to paragraphs of (do shell script "/usr/bin/shortcuts list")
+        repeat with existingShortcut in shortcutList
+            if (existingShortcut as string) is shortcutName then return true
+        end repeat
+    end try
+    return false
+end shortcutExists
 
 on uniqueFileBase(messageDate, messageSubject, messageId)
     set dateStamp to my formatDateStamp(messageDate)
