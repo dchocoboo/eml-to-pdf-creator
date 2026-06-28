@@ -58,7 +58,7 @@ final class EMLDropView: NSView {
         let promisedTypes = NSFilePromiseReceiver.readableDraggedTypes
             .map { NSPasteboard.PasteboardType($0) }
         registerForDraggedTypes([.fileURL, NSPasteboard.PasteboardType("NSFilesPromisePboardType")] + promisedTypes)
-        promiseQueue.name = "MailToNotes promised file receiver"
+        promiseQueue.name = "pdfmail promised file receiver"
         promiseQueue.maxConcurrentOperationCount = 1
 
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
@@ -126,7 +126,7 @@ final class EMLDropView: NSView {
         onDebugLog?("Mail promised file types: \(promisedTypes)")
 
         let destinationURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MailToNotesDrops-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("pdfmailDrops-\(UUID().uuidString)", isDirectory: true)
 
         do {
             try FileManager.default.createDirectory(
@@ -193,12 +193,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let dropView = EMLDropView()
     private let debugTextView = NSTextView()
     private let debugStatusLabel = NSTextField(labelWithString: "Ready")
-    private let mailExportQueue = DispatchQueue(label: "MailToNotes Mail export", qos: .userInitiated)
+    private let mailExportQueue = DispatchQueue(label: "pdfmail Mail export", qos: .userInitiated)
     private var queueProcess: Process?
+    private var shouldRunQueueProcessorAgain = false
     private var isMailExportInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let titleLabel = NSTextField(labelWithString: "MailToNotes")
+        let titleLabel = NSTextField(labelWithString: "pdfmail")
         titleLabel.font = .boldSystemFont(ofSize: 18)
 
         let subtitleLabel = NSTextField(labelWithString: "Configure purchase matching for the Mail extension.")
@@ -389,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "MailToNotes"
+        window.title = "pdfmail"
         window.contentView = rootView
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -568,7 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func reloadVisibleMessages() {
         MEExtensionManager.reloadVisibleMessages { error in
             if let error {
-                NSLog("MailToNotes reloadVisibleMessages failed: \(error.localizedDescription)")
+                NSLog("pdfmail reloadVisibleMessages failed: \(error.localizedDescription)")
             }
         }
     }
@@ -619,11 +620,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func convertDroppedEMLFiles(_ urls: [URL]) {
-        guard queueProcess == nil else {
-            dropView.statusText = "Conversion is already running."
-            return
-        }
-
         persistSettings(reloadVisibleMessages: false)
 
         do {
@@ -633,8 +629,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            dropView.statusText = "Queued \(queuedCount) file\(queuedCount == 1 ? "" : "s"). Converting..."
             appendDebugLog("Queued \(queuedCount) dropped .eml file\(queuedCount == 1 ? "" : "s").")
+
+            guard queueProcess == nil else {
+                shouldRunQueueProcessorAgain = true
+                dropView.statusText = "Queued \(queuedCount) more file\(queuedCount == 1 ? "" : "s"). They will convert next."
+                debugStatusLabel.stringValue = "Conversion running; more files queued."
+                appendDebugLog("Conversion is already running; queued files will be picked up next.")
+                return
+            }
+
+            dropView.statusText = "Queued \(queuedCount) file\(queuedCount == 1 ? "" : "s"). Converting..."
             try runQueueProcessor()
         } catch {
             dropView.statusText = "Could not start conversion: \(error.localizedDescription)"
@@ -643,8 +648,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func convertSelectedMailMessagesFromDrop() -> Bool {
-        guard queueProcess == nil, !isMailExportInProgress else {
-            dropView.statusText = "Conversion is already running."
+        guard !isMailExportInProgress else {
+            dropView.statusText = "Already receiving selected messages from Mail."
             return true
         }
 
@@ -707,7 +712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let exportDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MailToNotesMailDrop-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("pdfmailMailDrop-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
             at: exportDirectory,
             withIntermediateDirectories: true
@@ -732,7 +737,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func queueDroppedFiles(_ urls: [URL]) throws -> Int {
         let queueDirectory = MailToNotesSettings.applicationSupportDirectory
-            .appendingPathComponent("MailToNotes", isDirectory: true)
+            .appendingPathComponent(MailToNotesSettings.appSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("Incoming", isDirectory: true)
 
         try FileManager.default.createDirectory(
@@ -806,21 +811,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pipe.fileHandleForReading.readabilityHandler = nil
 
             DispatchQueue.main.async {
-                self?.queueProcess = nil
+                guard let self else {
+                    return
+                }
+
+                self.queueProcess = nil
+                let hasQueuedFollowUp = self.shouldRunQueueProcessorAgain
+                self.shouldRunQueueProcessorAgain = false
+
                 if process.terminationStatus == 0 {
-                    self?.dropView.statusText = "Conversion complete."
-                    self?.debugStatusLabel.stringValue = "Conversion complete."
-                    self?.appendDebugLog("Conversion finished successfully.")
+                    self.appendDebugLog("Conversion finished successfully.")
+
+                    if hasQueuedFollowUp {
+                        self.dropView.statusText = "Converting newly queued files..."
+                        self.debugStatusLabel.stringValue = "Conversion running..."
+                        self.appendDebugLog("Starting another conversion pass for files queued during processing.")
+                        do {
+                            try self.runQueueProcessor()
+                        } catch {
+                            self.dropView.statusText = "Could not continue conversion: \(error.localizedDescription)"
+                            self.debugStatusLabel.stringValue = "Could not continue conversion."
+                            self.appendDebugLog("Could not continue conversion: \(error.localizedDescription)")
+                        }
+                        return
+                    }
+
+                    self.dropView.statusText = "Conversion complete."
+                    self.debugStatusLabel.stringValue = "Conversion complete."
                 } else {
-                    self?.dropView.statusText = "Conversion failed. Open the Debug tab."
-                    self?.debugStatusLabel.stringValue = "Conversion failed."
-                    self?.appendDebugLog("Conversion failed with exit code \(process.terminationStatus).")
+                    self.dropView.statusText = "Conversion failed. Open the Debug tab."
+                    self.debugStatusLabel.stringValue = "Conversion failed."
+                    self.appendDebugLog("Conversion failed with exit code \(process.terminationStatus).")
+                    if hasQueuedFollowUp {
+                        self.appendDebugLog("Files queued during the failed conversion remain in the queue.")
+                    }
                 }
             }
         }
 
         queueProcess = process
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            queueProcess = nil
+            pipe.fileHandleForReading.readabilityHandler = nil
+            throw error
+        }
     }
 
     private func processorScriptURL() -> URL? {
@@ -939,7 +975,7 @@ private enum MailToNotesHostError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .processorNotFound:
-            return "The MailToNotes queue processor script could not be found."
+            return "The pdfmail queue processor script could not be found."
         case .pythonNotFound:
             return "A Python 3 executable could not be found."
         case .mailSelectionExportFailed(let message):

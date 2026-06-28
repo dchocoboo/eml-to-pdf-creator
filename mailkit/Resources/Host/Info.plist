@@ -23,6 +23,6 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>MailToNotes needs access to Mail to convert messages dragged directly from Mail into PDFs.</string>
+	<string>pdfmail needs access to Mail to convert messages dragged directly from Mail into PDFs.</string>
 </dict>
 </plist>

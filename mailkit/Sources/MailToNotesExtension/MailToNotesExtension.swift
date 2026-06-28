@@ -28,7 +28,7 @@ final class MessageActionHandler: NSObject, MEMessageActionHandler {
             try MessageExporter().export(message: message, rawData: rawData)
             completionHandler(.action(.setBackgroundColor(markColor())))
         } catch {
-            NSLog("MailToNotes failed to export message: \(error.localizedDescription)")
+            NSLog("pdfmail failed to export message: \(error.localizedDescription)")
             completionHandler(nil)
         }
     }
@@ -99,7 +99,7 @@ private struct MessageExporter {
 
     private func ensureQueueDirectory() throws -> URL {
         let queueDirectory = MailToNotesSettings.applicationSupportDirectory
-            .appendingPathComponent("MailToNotes", isDirectory: true)
+            .appendingPathComponent(MailToNotesSettings.appSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("Incoming", isDirectory: true)
 
         try FileManager.default.createDirectory(

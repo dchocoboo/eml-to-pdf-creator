@@ -1,8 +1,14 @@
 import Foundation
 
 enum MailToNotesSettings {
-    static let hostBundleIdentifier = "com.local.mailtonotes"
-    static let extensionBundleIdentifier = "com.local.mailtonotes.extension"
+    static let hostBundleIdentifier = "com.local.pdfmail"
+    static let extensionBundleIdentifier = "com.local.pdfmail.extension"
+    static let legacyHostBundleIdentifier = "com.local.mailtonotes"
+    static let legacyExtensionBundleIdentifier = "com.local.mailtonotes.extension"
+    static let appSupportDirectoryName = "pdfmail"
+    static let legacyAppSupportDirectoryName = "MailToNotes"
+    static let preferencesFileName = "com.local.pdfmail.settings.plist"
+    static let legacyPreferencesFileName = "com.local.mailtonotes.settings.plist"
     static let defaultKeywords = [
         "receipt",
         "invoice",
@@ -18,7 +24,7 @@ enum MailToNotesSettings {
     static let defaultMarkColor = "green"
     static let defaultOutputDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Documents", isDirectory: true)
-        .appendingPathComponent("MailToNotes PDFs", isDirectory: true)
+        .appendingPathComponent("pdfmail PDFs", isDirectory: true)
         .path
 
     struct Config: Codable {
@@ -32,12 +38,12 @@ enum MailToNotesSettings {
     static var preferencesURL: URL {
         sharedLibraryDirectory
             .appendingPathComponent("Preferences", isDirectory: true)
-            .appendingPathComponent("com.local.mailtonotes.settings.plist")
+            .appendingPathComponent(preferencesFileName)
     }
 
     static var configURL: URL {
         applicationSupportDirectory
-            .appendingPathComponent("MailToNotes", isDirectory: true)
+            .appendingPathComponent(appSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("config.json")
     }
 
@@ -103,7 +109,7 @@ enum MailToNotesSettings {
             let data = try encoder.encode(config)
             try data.write(to: preferencesURL, options: .atomic)
         } catch {
-            NSLog("MailToNotes failed to save settings: \(error.localizedDescription)")
+            NSLog("pdfmail failed to save settings: \(error.localizedDescription)")
         }
     }
 
@@ -194,27 +200,31 @@ enum MailToNotesSettings {
     private static var candidatePreferencesURLs: [URL] {
         uniqueURLs([
             preferencesURL,
-            preferencesURL(in: containerLibraryDirectory(for: hostBundleIdentifier))
+            preferencesURL(in: containerLibraryDirectory(for: hostBundleIdentifier), fileName: preferencesFileName),
+            preferencesURL(in: containerLibraryDirectory(for: legacyExtensionBundleIdentifier), fileName: legacyPreferencesFileName),
+            preferencesURL(in: containerLibraryDirectory(for: legacyHostBundleIdentifier), fileName: legacyPreferencesFileName)
         ])
     }
 
     private static var candidateConfigURLs: [URL] {
         uniqueURLs([
             configURL,
-            configURL(in: containerLibraryDirectory(for: hostBundleIdentifier))
+            configURL(in: containerLibraryDirectory(for: hostBundleIdentifier), directoryName: appSupportDirectoryName),
+            configURL(in: containerLibraryDirectory(for: legacyExtensionBundleIdentifier), directoryName: legacyAppSupportDirectoryName),
+            configURL(in: containerLibraryDirectory(for: legacyHostBundleIdentifier), directoryName: legacyAppSupportDirectoryName)
         ])
     }
 
-    private static func preferencesURL(in libraryDirectory: URL) -> URL {
+    private static func preferencesURL(in libraryDirectory: URL, fileName: String) -> URL {
         libraryDirectory
             .appendingPathComponent("Preferences", isDirectory: true)
-            .appendingPathComponent("com.local.mailtonotes.settings.plist")
+            .appendingPathComponent(fileName)
     }
 
-    private static func configURL(in libraryDirectory: URL) -> URL {
+    private static func configURL(in libraryDirectory: URL, directoryName: String) -> URL {
         libraryDirectory
             .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("MailToNotes", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true)
             .appendingPathComponent("config.json")
     }
 

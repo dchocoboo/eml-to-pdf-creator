@@ -32,14 +32,14 @@ Use `Convert Mail Selection to Notes.applescript` as a macOS Quick Action:
 4. Paste the contents of `Convert Mail Selection to Notes.applescript`
 5. Save it as **Convert Mail to PDF**
 
-Then select one or more messages in Apple Mail and run **Mail > Services > Convert Mail to PDF**. The script asks whether to create Apple Notes for that run, defaults to **PDF Only**, saves each message as an `.eml`, and creates a PDF in `output/`. If Notes is enabled and a shortcut named `MailToNotes Create Note` exists, the PDF is sent to that shortcut. Otherwise, the script creates a text-only Apple Note and leaves the PDF in the output folder. After conversion, choose **Open Output Folder** to reveal the PDFs in Finder.
+Then select one or more messages in Apple Mail and run **Mail > Services > Convert Mail to PDF**. The script asks whether to create Apple Notes for that run, defaults to **PDF Only**, saves each message as an `.eml`, and creates a PDF in `output/`. If Notes is enabled and a shortcut named `pdfmail Create Note` or `MailToNotes Create Note` exists, the PDF is sent to that shortcut. Otherwise, the script creates a text-only Apple Note and leaves the PDF in the output folder. After conversion, choose **Open Output Folder** to reveal the PDFs in Finder.
 
 #### Apple Notes Shortcut
 
 Create this once if you want generated PDFs attached to Apple Notes through Shortcuts:
 
 1. Open **Shortcuts** and create a new shortcut.
-2. Name it exactly `MailToNotes Create Note`.
+2. Name it exactly `pdfmail Create Note`. The old name `MailToNotes Create Note` is still supported for existing installs.
 3. Add **Create Note** from the Notes actions.
 4. Set the action to **Create note with** `Shortcut Input` **in** `Purchases`.
 5. Open the action details and set **Name** to the `Shortcut Input` variable.
@@ -61,7 +61,7 @@ To save a reusable copy, open the shortcut in Shortcuts and choose **File > Expo
 
 ### MailKit Extension
 
-The `mailkit/` folder contains a MailKit prototype for purchase-like incoming messages. MailKit does not add a custom right-click command for selected messages; it runs as Mail downloads messages. The extension queues matching raw emails, then the processor converts them to PDFs. Apple Notes creation is off by default and can be toggled in `MailToNotes.app`; when enabled, the generated PDF is sent to the `MailToNotes Create Note` shortcut when present, otherwise a text-only Apple Note is created.
+The `mailkit/` folder contains a MailKit prototype for purchase-like incoming messages. MailKit does not add a custom right-click command for selected messages; it runs as Mail downloads messages. The extension queues matching raw emails, then the processor converts them to PDFs. Apple Notes creation is off by default and can be toggled in `pdfmail.app`; when enabled, the generated PDF is sent to a supported Notes shortcut when present, otherwise a text-only Apple Note is created.
 
 ```bash
 # Requires the Xcode license to be accepted first.

@@ -4,7 +4,8 @@ property notesFolderName : "Purchases"
 property createAppleNotes : false
 property attachPdfToNote : false
 property useShortcutsForNotes : true
-property notesShortcutName : "MailToNotes Create Note"
+property notesShortcutName : "pdfmail Create Note"
+property legacyNotesShortcutName : "MailToNotes Create Note"
 
 on run {input, parameters}
     if input is {} then
@@ -53,7 +54,7 @@ on run {input, parameters}
         end if
     end repeat
 
-    display notification "Converted " & (count of input) & " Mail message(s) to PDF" with title "Mail to PDF"
+    display notification "Converted " & (count of input) & " Mail message(s) to PDF" with title "pdfmail"
     set completionChoice to button returned of (display dialog "Converted " & (count of input) & " Mail message(s) to PDF." & return & return & "Output folder: " & outputDir buttons {"Done", "Open Output Folder"} default button "Open Output Folder")
     if completionChoice is "Open Output Folder" then
         do shell script "open " & quoted form of outputDir
@@ -64,8 +65,9 @@ end run
 on createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
     set noteTitle to "Purchase - " & messageSubject
 
-    if useShortcutsForNotes and my shortcutExists(notesShortcutName) then
-        my createPurchaseNoteWithShortcut(pdfPath, noteTitle)
+    set availableShortcutName to my availableNotesShortcut()
+    if useShortcutsForNotes and availableShortcutName is not "" then
+        my createPurchaseNoteWithShortcut(pdfPath, noteTitle, availableShortcutName)
         return
     end if
 
@@ -92,25 +94,26 @@ on createPurchaseNote(messageSubject, messageSender, messageDate, pdfPath)
     end tell
 end createPurchaseNote
 
-on createPurchaseNoteWithShortcut(pdfPath, noteTitle)
+on createPurchaseNoteWithShortcut(pdfPath, noteTitle, shortcutName)
     set shortcutPdfPath to my copyPdfForShortcut(pdfPath, noteTitle)
-    do shell script "/usr/bin/shortcuts run " & quoted form of notesShortcutName & " --input-path " & quoted form of shortcutPdfPath
+    do shell script "/usr/bin/shortcuts run " & quoted form of shortcutName & " --input-path " & quoted form of shortcutPdfPath
 end createPurchaseNoteWithShortcut
 
 on copyPdfForShortcut(pdfPath, noteTitle)
-    set scriptText to "import re, shutil, sys, tempfile; from pathlib import Path; src = Path(sys.argv[1]); title = sys.argv[2]; stem = re.sub(r'[:/\\\\*?\"<>|\\r\\n\\t]', '-', title); stem = re.sub(r'\\s+', ' ', stem).strip() or src.stem; stem = stem[:160]; dst = Path(tempfile.mkdtemp(prefix='mailtonotes-shortcut-')) / (stem + '.pdf'); shutil.copy2(src, dst); print(dst)"
+    set scriptText to "import re, shutil, sys, tempfile; from pathlib import Path; src = Path(sys.argv[1]); title = sys.argv[2]; stem = re.sub(r'[:/\\\\*?\"<>|\\r\\n\\t]', '-', title); stem = re.sub(r'\\s+', ' ', stem).strip() or src.stem; stem = stem[:160]; dst = Path(tempfile.mkdtemp(prefix='pdfmail-shortcut-')) / (stem + '.pdf'); shutil.copy2(src, dst); print(dst)"
     return do shell script quoted form of pythonPath & " -c " & quoted form of scriptText & " " & quoted form of pdfPath & " " & quoted form of noteTitle
 end copyPdfForShortcut
 
-on shortcutExists(shortcutName)
+on availableNotesShortcut()
     try
         set shortcutList to paragraphs of (do shell script "/usr/bin/shortcuts list")
         repeat with existingShortcut in shortcutList
-            if (existingShortcut as string) is shortcutName then return true
+            if (existingShortcut as string) is notesShortcutName then return notesShortcutName
+            if (existingShortcut as string) is legacyNotesShortcutName then return legacyNotesShortcutName
         end repeat
     end try
-    return false
-end shortcutExists
+    return ""
+end availableNotesShortcut
 
 on uniqueFileBase(messageDate, messageSubject, messageId)
     set dateStamp to my formatDateStamp(messageDate)

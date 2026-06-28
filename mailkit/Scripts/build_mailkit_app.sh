@@ -4,8 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MAILKIT_DIR="$ROOT_DIR/mailkit"
 BUILD_DIR="$MAILKIT_DIR/build"
-APP_NAME="MailToNotes"
+APP_NAME="pdfmail"
 BUILT_APP="$BUILD_DIR/DerivedData/Build/Products/Debug/$APP_NAME.app"
+OLD_APP_NAME="MailToNotes"
 DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
 if [[ ! -d "$DEVELOPER_DIR" ]]; then
@@ -26,7 +27,7 @@ fi
 )
 
 xcodebuild \
-    -project "$MAILKIT_DIR/MailToNotes.xcodeproj" \
+    -project "$MAILKIT_DIR/pdfmail.xcodeproj" \
     -scheme "$APP_NAME" \
     -configuration Debug \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
@@ -37,9 +38,11 @@ xcodebuild \
 
 if [[ "${1:-}" == "--install" ]]; then
     /usr/bin/osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+    /usr/bin/osascript -e "tell application \"$OLD_APP_NAME\" to quit" >/dev/null 2>&1 || true
     sleep 1
 
     rm -rf "/Applications/$APP_NAME.app"
+    rm -rf "/Applications/$OLD_APP_NAME.app"
     cp -R "$BUILT_APP" "/Applications/$APP_NAME.app"
 
     /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \

@@ -1,4 +1,4 @@
-name: MailToNotes
+name: pdfmail
 options:
   bundleIdPrefix: com.local
   deploymentTarget:
@@ -10,7 +10,7 @@ settings:
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "12.0"
 targets:
-  MailToNotes:
+  pdfmail:
     type: application
     platform: macOS
     sources:
@@ -35,16 +35,16 @@ targets:
         CFBundlePackageType: APPL
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
-        NSAppleEventsUsageDescription: "MailToNotes needs access to Mail to convert messages dragged directly from Mail into PDFs."
+        NSAppleEventsUsageDescription: "pdfmail needs access to Mail to convert messages dragged directly from Mail into PDFs."
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        PRODUCT_BUNDLE_IDENTIFIER: com.local.mailtonotes
-        PRODUCT_NAME: MailToNotes
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.pdfmail
+        PRODUCT_NAME: pdfmail
     dependencies:
-      - target: MailToNotesExtension
+      - target: pdfmailExtension
         embed: true
-  MailToNotesExtension:
+  pdfmailExtension:
     type: app-extension
     platform: macOS
     sources:
@@ -78,7 +78,7 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        PRODUCT_BUNDLE_IDENTIFIER: com.local.mailtonotes.extension
-        PRODUCT_NAME: MailToNotesExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.local.pdfmail.extension
+        PRODUCT_NAME: pdfmailExtension
         SKIP_INSTALL: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"

@@ -19,20 +19,39 @@ EXTENSION_LIBRARY_DIR = (
     Path.home()
     / "Library"
     / "Containers"
+    / "com.local.pdfmail.extension"
+    / "Data"
+    / "Library"
+)
+LEGACY_EXTENSION_LIBRARY_DIR = (
+    Path.home()
+    / "Library"
+    / "Containers"
     / "com.local.mailtonotes.extension"
     / "Data"
     / "Library"
 )
-MAILTONOTES_DIR = (
+PDFMAIL_DIR = (
     EXTENSION_LIBRARY_DIR
+    / "Application Support"
+    / "pdfmail"
+)
+LEGACY_MAILTONOTES_DIR = (
+    LEGACY_EXTENSION_LIBRARY_DIR
     / "Application Support"
     / "MailToNotes"
 )
-QUEUE_DIR = MAILTONOTES_DIR / "Incoming"
-DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "MailToNotes PDFs"
-SETTINGS_JSON = MAILTONOTES_DIR / "config.json"
+QUEUE_DIR = PDFMAIL_DIR / "Incoming"
+DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "pdfmail PDFs"
+SETTINGS_JSON = PDFMAIL_DIR / "config.json"
+LEGACY_SETTINGS_JSON = LEGACY_MAILTONOTES_DIR / "config.json"
 SETTINGS_PLIST = (
     EXTENSION_LIBRARY_DIR
+    / "Preferences"
+    / "com.local.pdfmail.settings.plist"
+)
+LEGACY_SETTINGS_PLIST = (
+    LEGACY_EXTENSION_LIBRARY_DIR
     / "Preferences"
     / "com.local.mailtonotes.settings.plist"
 )
@@ -40,7 +59,7 @@ DEFAULT_NOTES_FOLDER = "Purchases"
 DEFAULT_CREATE_APPLE_NOTES = False
 ATTACH_PDF_TO_NOTE = False
 USE_SHORTCUTS_FOR_NOTES = True
-DEFAULT_NOTES_SHORTCUT = "MailToNotes Create Note"
+NOTES_SHORTCUTS = ("pdfmail Create Note", "MailToNotes Create Note")
 
 sys.path.insert(0, str(next(
     path for path in [REPO_ROOT, SCRIPT_DIR, SCRIPT_DIR.parent]
@@ -103,8 +122,9 @@ def create_note(metadata: dict[str, str], pdf_path: Path) -> None:
     subject = metadata.get("subject") or pdf_path.stem
     note_title = f"Purchase - {subject}"
 
-    if USE_SHORTCUTS_FOR_NOTES and shortcut_exists(DEFAULT_NOTES_SHORTCUT):
-        create_note_with_shortcut(pdf_path, note_title)
+    shortcut_name = available_notes_shortcut()
+    if USE_SHORTCUTS_FOR_NOTES and shortcut_name:
+        create_note_with_shortcut(pdf_path, note_title, shortcut_name)
         return
 
     sender = metadata.get("from") or "Unknown"
@@ -156,13 +176,13 @@ end run
     )
 
 
-def create_note_with_shortcut(pdf_path: Path, note_title: str) -> None:
+def create_note_with_shortcut(pdf_path: Path, note_title: str, shortcut_name: str) -> None:
     shortcut_pdf_path = copy_pdf_for_shortcut(pdf_path, note_title)
     subprocess.run(
         [
             "shortcuts",
             "run",
-            DEFAULT_NOTES_SHORTCUT,
+            shortcut_name,
             "--input-path",
             str(shortcut_pdf_path),
         ],
@@ -174,13 +194,13 @@ def copy_pdf_for_shortcut(pdf_path: Path, note_title: str) -> Path:
     safe_stem = re.sub(r'[:/\\*?"<>|\r\n\t]', "-", note_title)
     safe_stem = re.sub(r"\s+", " ", safe_stem).strip() or pdf_path.stem
     safe_stem = safe_stem[:160]
-    shortcut_dir = Path(tempfile.mkdtemp(prefix="mailtonotes-shortcut-"))
+    shortcut_dir = Path(tempfile.mkdtemp(prefix="pdfmail-shortcut-"))
     shortcut_pdf_path = shortcut_dir / f"{safe_stem}.pdf"
     shutil.copy2(pdf_path, shortcut_pdf_path)
     return shortcut_pdf_path
 
 
-def shortcut_exists(shortcut_name: str) -> bool:
+def available_notes_shortcut() -> str | None:
     try:
         result = subprocess.run(
             ["shortcuts", "list"],
@@ -189,9 +209,10 @@ def shortcut_exists(shortcut_name: str) -> bool:
             text=True,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
+        return None
 
-    return any(line.strip() == shortcut_name for line in result.stdout.splitlines())
+    shortcuts = {line.strip() for line in result.stdout.splitlines()}
+    return next((name for name in NOTES_SHORTCUTS if name in shortcuts), None)
 
 
 def notes_folder() -> str:
@@ -210,13 +231,15 @@ def output_directory() -> Path:
 
 
 def read_settings() -> dict[str, object]:
-    if SETTINGS_PLIST.exists():
-        with SETTINGS_PLIST.open("rb") as file:
-            return plistlib.load(file)
+    for settings_plist in (SETTINGS_PLIST, LEGACY_SETTINGS_PLIST):
+        if settings_plist.exists():
+            with settings_plist.open("rb") as file:
+                return plistlib.load(file)
 
-    if SETTINGS_JSON.exists():
-        with SETTINGS_JSON.open("r", encoding="utf-8") as file:
-            return json.load(file)
+    for settings_json in (SETTINGS_JSON, LEGACY_SETTINGS_JSON):
+        if settings_json.exists():
+            with settings_json.open("r", encoding="utf-8") as file:
+                return json.load(file)
 
     return {}
 
@@ -237,7 +260,7 @@ on run argv
     set notificationTitle to item 1 of argv
     set notificationMessage to item 2 of argv
 
-    display notification notificationMessage with title notificationTitle subtitle "MailToNotes"
+    display notification notificationMessage with title notificationTitle subtitle "pdfmail"
 end run
 """
 
