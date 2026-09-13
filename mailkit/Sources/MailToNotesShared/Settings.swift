@@ -23,8 +23,7 @@ enum MailToNotesSettings {
     static let defaultCreateAppleNotes = false
     static let defaultMarkColor = "green"
     static let defaultOutputDirectory = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Documents", isDirectory: true)
-        .appendingPathComponent("pdfmail PDFs", isDirectory: true)
+        .appendingPathComponent("Downloads", isDirectory: true)
         .path
 
     struct Config: Codable {

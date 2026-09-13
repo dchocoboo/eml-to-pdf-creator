@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import MailKit
 
 final class EMLDropView: NSView {
     var onDropFiles: (([URL]) -> Void)?
@@ -8,7 +7,7 @@ final class EMLDropView: NSView {
     var onDebugLog: ((String) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "Drop .eml files here")
-    private let detailLabel = NSTextField(labelWithString: "They will be converted using the saved output and Notes folders.")
+    private let detailLabel = NSTextField(labelWithString: "They will be converted using the saved output folder.")
     private lazy var receiver: EMLDropReceiver = {
         let receiver = EMLDropReceiver()
         receiver.onDropFiles = { [weak self] urls in self?.onDropFiles?(urls) }
@@ -80,15 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let statusItemDropView = StatusItemDropView()
     private let statusMenu = NSMenu()
     private let statusMenuStatusItem = NSMenuItem(title: "Ready — drag Mail here", action: nil, keyEquivalent: "")
-    private var keywords = MailToNotesSettings.keywords
-    private let keywordInputField = NSTextField()
-    private let addKeywordButton = NSButton()
-    private let keywordsContainerView = NSView()
-    private let keywordsStackView = NSStackView()
-    private let notesFolderField = NSTextField()
-    private let createAppleNotesButton = NSButton(checkboxWithTitle: "Send PDFs to Apple Notes", target: nil, action: nil)
     private let outputFolderField = NSTextField()
-    private let markColorPopup = NSPopUpButton()
     private let dropView = EMLDropView()
     private let debugTextView = NSTextView()
     private let debugStatusLabel = NSTextField(labelWithString: "Ready")
@@ -101,44 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let titleLabel = NSTextField(labelWithString: "pdfmail")
         titleLabel.font = .boldSystemFont(ofSize: 18)
 
-        let subtitleLabel = NSTextField(labelWithString: "Configure purchase matching for the Mail extension.")
+        let subtitleLabel = NSTextField(labelWithString: "Convert Mail messages and dropped .eml files to PDF.")
         subtitleLabel.textColor = .secondaryLabelColor
-
-        let keywordsLabel = NSTextField(labelWithString: "Keywords")
-
-        keywordInputField.placeholderString = "Add keyword"
-        keywordInputField.target = self
-        keywordInputField.action = #selector(addKeywordsFromInput)
-
-        addKeywordButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add keyword")
-        addKeywordButton.bezelStyle = .rounded
-        addKeywordButton.target = self
-        addKeywordButton.action = #selector(addKeywordsFromInput)
-        addKeywordButton.toolTip = "Add keyword"
-
-        let keywordInputStack = NSStackView(views: [keywordInputField, addKeywordButton])
-        keywordInputStack.orientation = .horizontal
-        keywordInputStack.spacing = 8
-        keywordInputStack.alignment = .centerY
-
-        keywordsStackView.orientation = .vertical
-        keywordsStackView.spacing = 6
-        keywordsStackView.alignment = .leading
-        keywordsStackView.translatesAutoresizingMaskIntoConstraints = false
-        keywordsContainerView.addSubview(keywordsStackView)
-        keywordsContainerView.frame = NSRect(x: 0, y: 0, width: 472, height: 160)
-        keywordsContainerView.autoresizingMask = [.width]
-
-        let scrollView = NSScrollView()
-        scrollView.borderType = .bezelBorder
-        scrollView.hasVerticalScroller = true
-        scrollView.documentView = keywordsContainerView
-        renderKeywordRows()
-
-        let notesFolderLabel = NSTextField(labelWithString: "Notes Folder")
-        notesFolderField.stringValue = MailToNotesSettings.notesFolder
-
-        createAppleNotesButton.state = MailToNotesSettings.createAppleNotes ? .on : .off
 
         let outputFolderLabel = NSTextField(labelWithString: "Output Folder")
         outputFolderField.stringValue = MailToNotesSettings.outputDirectory
@@ -158,10 +113,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         openOutputFolderButton.bezelStyle = .rounded
 
-        let markColorLabel = NSTextField(labelWithString: "Mail Color")
-        markColorPopup.addItems(withTitles: ["green", "blue", "gray", "orange", "purple", "red", "yellow"])
-        markColorPopup.selectItem(withTitle: MailToNotesSettings.markColor)
-
         dropView.onDropFiles = { [weak self] urls in
             self?.convertDroppedEMLFiles(urls)
         }
@@ -174,9 +125,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let saveButton = NSButton(title: "Save", target: self, action: #selector(saveSettings))
         saveButton.bezelStyle = .rounded
-
-        let reloadButton = NSButton(title: "Reload Visible Messages", target: self, action: #selector(reloadVisibleMessages))
-        reloadButton.bezelStyle = .rounded
 
         let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 660, height: 680))
         let tabView = NSTabView(frame: rootView.bounds)
@@ -197,21 +145,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         [
             titleLabel,
             subtitleLabel,
-            keywordsLabel,
-            keywordInputStack,
-            scrollView,
-            notesFolderLabel,
-            notesFolderField,
-            createAppleNotesButton,
             outputFolderLabel,
             outputFolderField,
             chooseOutputFolderButton,
             openOutputFolderButton,
-            markColorLabel,
-            markColorPopup,
             dropView,
-            saveButton,
-            reloadButton
+            saveButton
         ].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             settingsView.addSubview($0)
@@ -229,58 +168,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
 
-            keywordsLabel.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 24),
-            keywordsLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-
-            keywordInputStack.topAnchor.constraint(equalTo: keywordsLabel.bottomAnchor, constant: 8),
-            keywordInputStack.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            keywordInputStack.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
-            addKeywordButton.widthAnchor.constraint(equalToConstant: 32),
-
-            scrollView.topAnchor.constraint(equalTo: keywordInputStack.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
-            scrollView.heightAnchor.constraint(equalToConstant: 150),
-
-            keywordsStackView.topAnchor.constraint(equalTo: keywordsContainerView.topAnchor, constant: 8),
-            keywordsStackView.leadingAnchor.constraint(equalTo: keywordsContainerView.leadingAnchor, constant: 8),
-            keywordsStackView.trailingAnchor.constraint(equalTo: keywordsContainerView.trailingAnchor, constant: -8),
-            keywordsStackView.bottomAnchor.constraint(lessThanOrEqualTo: keywordsContainerView.bottomAnchor, constant: -8),
-
-            notesFolderLabel.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 18),
-            notesFolderLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            notesFolderField.centerYAnchor.constraint(equalTo: notesFolderLabel.centerYAnchor),
-            notesFolderField.leadingAnchor.constraint(equalTo: settingsView.leadingAnchor, constant: 150),
-            notesFolderField.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
-
-            createAppleNotesButton.topAnchor.constraint(equalTo: notesFolderLabel.bottomAnchor, constant: 14),
-            createAppleNotesButton.leadingAnchor.constraint(equalTo: notesFolderField.leadingAnchor),
-
-            outputFolderLabel.topAnchor.constraint(equalTo: createAppleNotesButton.bottomAnchor, constant: 18),
+            outputFolderLabel.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 24),
             outputFolderLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             outputFolderField.centerYAnchor.constraint(equalTo: outputFolderLabel.centerYAnchor),
-            outputFolderField.leadingAnchor.constraint(equalTo: notesFolderField.leadingAnchor),
+            outputFolderField.leadingAnchor.constraint(equalTo: settingsView.leadingAnchor, constant: 150),
             chooseOutputFolderButton.centerYAnchor.constraint(equalTo: outputFolderField.centerYAnchor),
             chooseOutputFolderButton.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
             openOutputFolderButton.centerYAnchor.constraint(equalTo: outputFolderField.centerYAnchor),
             openOutputFolderButton.trailingAnchor.constraint(equalTo: chooseOutputFolderButton.leadingAnchor, constant: -8),
             outputFolderField.trailingAnchor.constraint(equalTo: openOutputFolderButton.leadingAnchor, constant: -8),
 
-            markColorLabel.topAnchor.constraint(equalTo: outputFolderLabel.bottomAnchor, constant: 18),
-            markColorLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            markColorPopup.centerYAnchor.constraint(equalTo: markColorLabel.centerYAnchor),
-            markColorPopup.leadingAnchor.constraint(equalTo: notesFolderField.leadingAnchor),
-
-            dropView.topAnchor.constraint(equalTo: markColorLabel.bottomAnchor, constant: 18),
+            dropView.topAnchor.constraint(equalTo: outputFolderLabel.bottomAnchor, constant: 18),
             dropView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             dropView.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
             dropView.heightAnchor.constraint(equalToConstant: 92),
 
             saveButton.trailingAnchor.constraint(equalTo: settingsView.trailingAnchor, constant: -24),
-            saveButton.bottomAnchor.constraint(equalTo: settingsView.bottomAnchor, constant: -24),
-
-            reloadButton.trailingAnchor.constraint(equalTo: saveButton.leadingAnchor, constant: -12),
-            reloadButton.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor)
+            saveButton.bottomAnchor.constraint(equalTo: settingsView.bottomAnchor, constant: -24)
         ])
 
         let window = NSWindow(
@@ -300,7 +204,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         configureStatusItem()
-        reloadVisibleMessages()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -491,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func saveSettings() {
-        persistSettings(reloadVisibleMessages: true)
+        persistSettings()
     }
 
     @objc private func runQueuedConversionFromDebug() {
@@ -500,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        persistSettings(reloadVisibleMessages: false)
+        persistSettings()
 
         do {
             appendDebugLog("Running queued conversion manually.")
@@ -528,17 +431,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         debugTextView.string = ""
     }
 
-    private func persistSettings(reloadVisibleMessages shouldReload: Bool) {
+    private func persistSettings() {
         MailToNotesSettings.save(
-            keywords: keywords,
-            notesFolder: notesFolderField.stringValue,
-            createAppleNotes: createAppleNotesButton.state == .on,
-            markColor: markColorPopup.titleOfSelectedItem ?? MailToNotesSettings.defaultMarkColor,
+            keywords: MailToNotesSettings.defaultKeywords,
+            notesFolder: MailToNotesSettings.defaultNotesFolder,
+            createAppleNotes: false,
+            markColor: MailToNotesSettings.defaultMarkColor,
             outputDirectory: outputFolderField.stringValue
         )
-        if shouldReload {
-            reloadVisibleMessages()
-        }
     }
 
     @objc private func chooseOutputFolder() {
@@ -556,92 +456,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    @objc private func addKeywordsFromInput() {
-        let additions = keywordInputField.stringValue
-            .components(separatedBy: CharacterSet(charactersIn: ",\n"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { !$0.isEmpty }
-
-        guard !additions.isEmpty else {
-            keywordInputField.stringValue = ""
-            return
-        }
-
-        let updatedKeywords = MailToNotesSettings.normalizeKeywords(keywords + additions)
-        guard updatedKeywords != keywords else {
-            keywordInputField.stringValue = ""
-            return
-        }
-
-        keywords = updatedKeywords
-        keywordInputField.stringValue = ""
-        renderKeywordRows()
-    }
-
-    @objc private func removeKeyword(_ sender: NSButton) {
-        guard keywords.indices.contains(sender.tag) else {
-            return
-        }
-
-        keywords.remove(at: sender.tag)
-        renderKeywordRows()
-    }
-
-    @objc private func reloadVisibleMessages() {
-        MEExtensionManager.reloadVisibleMessages { error in
-            if let error {
-                NSLog("pdfmail reloadVisibleMessages failed: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func renderKeywordRows() {
-        keywordsStackView.arrangedSubviews.forEach { view in
-            keywordsStackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-
-        let rowCount = max(keywords.count, 1)
-        keywordsContainerView.frame.size.height = max(150, CGFloat(rowCount * 30 + 16))
-
-        if keywords.isEmpty {
-            let emptyLabel = NSTextField(labelWithString: "No keywords added.")
-            emptyLabel.textColor = .secondaryLabelColor
-            keywordsStackView.addArrangedSubview(emptyLabel)
-            return
-        }
-
-        for (index, keyword) in keywords.enumerated() {
-            let keywordLabel = NSTextField(labelWithString: keyword)
-            keywordLabel.lineBreakMode = .byTruncatingTail
-            keywordLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-            let removeButton = NSButton()
-            removeButton.image = NSImage(
-                systemSymbolName: "minus.circle",
-                accessibilityDescription: "Remove \(keyword)"
-            )
-            removeButton.bezelStyle = .inline
-            removeButton.isBordered = false
-            removeButton.target = self
-            removeButton.action = #selector(removeKeyword(_:))
-            removeButton.tag = index
-            removeButton.toolTip = "Remove \(keyword)"
-
-            let row = NSStackView(views: [keywordLabel, removeButton])
-            row.orientation = .horizontal
-            row.spacing = 8
-            row.alignment = .centerY
-            row.translatesAutoresizingMaskIntoConstraints = false
-
-            keywordsStackView.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: keywordsStackView.widthAnchor).isActive = true
-            removeButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        }
-    }
-
     private func convertDroppedEMLFiles(_ urls: [URL]) {
-        persistSettings(reloadVisibleMessages: false)
+        persistSettings()
 
         do {
             let queuedCount = try queueDroppedFiles(urls)
