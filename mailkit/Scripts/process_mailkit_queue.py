@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import html
+import fcntl
 import json
+import os
 import plistlib
 import re
 import shutil
@@ -42,6 +44,9 @@ LEGACY_MAILTONOTES_DIR = (
     / "MailToNotes"
 )
 QUEUE_DIR = PDFMAIL_DIR / "Incoming"
+LEGACY_QUEUE_DIR = LEGACY_MAILTONOTES_DIR / "Incoming"
+CURRENT_QUEUE_DIRS = (QUEUE_DIR,)
+ALL_QUEUE_DIRS = (QUEUE_DIR, LEGACY_QUEUE_DIR)
 DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "pdfmail PDFs"
 SETTINGS_JSON = PDFMAIL_DIR / "config.json"
 LEGACY_SETTINGS_JSON = LEGACY_MAILTONOTES_DIR / "config.json"
@@ -60,6 +65,9 @@ DEFAULT_CREATE_APPLE_NOTES = False
 ATTACH_PDF_TO_NOTE = False
 USE_SHORTCUTS_FOR_NOTES = True
 NOTES_SHORTCUTS = ("pdfmail Create Note", "MailToNotes Create Note")
+NOTES_COMMAND_TIMEOUT_SECONDS = 30
+UTILITY_COMMAND_TIMEOUT_SECONDS = 10
+PROCESSOR_LOCK = PDFMAIL_DIR / "processor.lock"
 
 sys.path.insert(0, str(next(
     path for path in [REPO_ROOT, SCRIPT_DIR, SCRIPT_DIR.parent]
@@ -69,13 +77,30 @@ from eml_to_image import convert_eml  # noqa: E402
 
 
 def main() -> int:
+    PDFMAIL_DIR.mkdir(parents=True, exist_ok=True)
+    with PROCESSOR_LOCK.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+        return process_queue()
+
+
+def process_queue() -> int:
     output_dir = output_directory()
+    queue_dirs = selected_queue_directories()
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    eml_files = sorted(QUEUE_DIR.glob("*.eml"))
+    eml_files = sorted(
+        eml_path
+        for queue_dir in queue_dirs
+        for eml_path in queue_dir.glob("*.eml")
+    )
     if not eml_files:
-        print(f"No queued .eml files found in {QUEUE_DIR}")
+        queue_paths = ", ".join(str(queue_dir) for queue_dir in queue_dirs)
+        print(f"No queued .eml files found in {queue_paths}")
         return 0
 
     processed_subjects: list[str] = []
@@ -104,6 +129,12 @@ def main() -> int:
 
     notify_processed(processed_subjects)
     return 0
+
+
+def selected_queue_directories() -> tuple[Path, ...]:
+    if "--include-legacy" in sys.argv[1:]:
+        return ALL_QUEUE_DIRS
+    return CURRENT_QUEUE_DIRS
 
 
 def read_metadata(eml_path: Path) -> dict[str, str]:
@@ -173,21 +204,26 @@ end run
             str(ATTACH_PDF_TO_NOTE).lower(),
         ],
         check=True,
+        timeout=NOTES_COMMAND_TIMEOUT_SECONDS,
     )
 
 
 def create_note_with_shortcut(pdf_path: Path, note_title: str, shortcut_name: str) -> None:
     shortcut_pdf_path = copy_pdf_for_shortcut(pdf_path, note_title)
-    subprocess.run(
-        [
-            "shortcuts",
-            "run",
-            shortcut_name,
-            "--input-path",
-            str(shortcut_pdf_path),
-        ],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "shortcuts",
+                "run",
+                shortcut_name,
+                "--input-path",
+                str(shortcut_pdf_path),
+            ],
+            check=True,
+            timeout=NOTES_COMMAND_TIMEOUT_SECONDS,
+        )
+    finally:
+        shutil.rmtree(shortcut_pdf_path.parent, ignore_errors=True)
 
 
 def copy_pdf_for_shortcut(pdf_path: Path, note_title: str) -> Path:
@@ -207,8 +243,9 @@ def available_notes_shortcut() -> str | None:
             check=True,
             capture_output=True,
             text=True,
+            timeout=UTILITY_COMMAND_TIMEOUT_SECONDS,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
 
     shortcuts = {line.strip() for line in result.stdout.splitlines()}
@@ -264,7 +301,14 @@ on run argv
 end run
 """
 
-    subprocess.run(["osascript", "-e", script, title, message], check=False)
+    try:
+        subprocess.run(
+            ["osascript", "-e", script, title, message],
+            check=False,
+            timeout=UTILITY_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        print("Warning: completion notification timed out.")
 
 
 def truncate(value: str, limit: int = 80) -> str:

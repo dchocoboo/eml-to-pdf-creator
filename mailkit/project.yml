@@ -19,6 +19,7 @@ targets:
       - path: Resources/Assets.xcassets
       - path: Resources/MailToNotes.icns
       - path: Scripts/process_mailkit_queue.py
+      - path: Scripts/pdfmail_automation.py
       - path: ../eml_to_image.py
     entitlements:
       path: Resources/Host/MailToNotes.entitlements

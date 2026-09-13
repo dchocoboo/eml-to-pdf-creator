@@ -9,8 +9,14 @@ final class EMLDropView: NSView {
 
     private let titleLabel = NSTextField(labelWithString: "Drop .eml files here")
     private let detailLabel = NSTextField(labelWithString: "They will be converted using the saved output and Notes folders.")
-    private let promiseQueue = OperationQueue()
-    private var pendingPromiseReceivers: [NSFilePromiseReceiver] = []
+    private lazy var receiver: EMLDropReceiver = {
+        let receiver = EMLDropReceiver()
+        receiver.onDropFiles = { [weak self] urls in self?.onDropFiles?(urls) }
+        receiver.onMailMessageDrop = { [weak self] in self?.onMailMessageDrop?() ?? false }
+        receiver.onStatusChange = { [weak self] status in self?.statusText = status }
+        receiver.onDebugLog = { [weak self] message in self?.onDebugLog?(message) }
+        return receiver
+    }()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -28,25 +34,15 @@ final class EMLDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        acceptsEMLFiles(sender) ? .copy : []
+        receiver.accepts(sender) ? .copy : []
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        acceptsEMLFiles(sender) ? .copy : []
+        receiver.accepts(sender) ? .copy : []
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let urls = fileURLs(from: sender).filter { $0.pathExtension.lowercased() == "eml" }
-        if !urls.isEmpty {
-            onDropFiles?(urls)
-            return true
-        }
-
-        if isMailMessageDrop(sender), onMailMessageDrop?() == true {
-            return true
-        }
-
-        return receivePromisedFiles(from: sender)
+        receiver.perform(sender)
     }
 
     private func setup() {
@@ -55,11 +51,7 @@ final class EMLDropView: NSView {
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor
         layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        let promisedTypes = NSFilePromiseReceiver.readableDraggedTypes
-            .map { NSPasteboard.PasteboardType($0) }
-        registerForDraggedTypes([.fileURL, NSPasteboard.PasteboardType("NSFilesPromisePboardType")] + promisedTypes)
-        promiseQueue.name = "pdfmail promised file receiver"
-        promiseQueue.maxConcurrentOperationCount = 1
+        registerForDraggedTypes(EMLDropReceiver.registeredPasteboardTypes)
 
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         detailLabel.textColor = .secondaryLabelColor
@@ -79,108 +71,15 @@ final class EMLDropView: NSView {
         ])
     }
 
-    private func acceptsEMLFiles(_ sender: NSDraggingInfo) -> Bool {
-        fileURLs(from: sender).contains { $0.pathExtension.lowercased() == "eml" }
-            || isMailMessageDrop(sender)
-            || !filePromiseReceivers(from: sender).isEmpty
-    }
-
-    private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
-        guard let values = sender.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL] else {
-            return []
-        }
-
-        return values
-    }
-
-    private func filePromiseReceivers(from sender: NSDraggingInfo) -> [NSFilePromiseReceiver] {
-        sender.draggingPasteboard.readObjects(
-            forClasses: [NSFilePromiseReceiver.self],
-            options: nil
-        ) as? [NSFilePromiseReceiver] ?? []
-    }
-
-    private func isMailMessageDrop(_ sender: NSDraggingInfo) -> Bool {
-        sender.draggingPasteboard.types?.contains {
-            $0.rawValue.localizedCaseInsensitiveContains("com.apple.mail")
-        } ?? false
-    }
-
-    private func receivePromisedFiles(from sender: NSDraggingInfo) -> Bool {
-        let receivers = filePromiseReceivers(from: sender)
-        guard !receivers.isEmpty else {
-            return false
-        }
-
-        statusText = "Receiving files from Mail..."
-        pendingPromiseReceivers = receivers
-        let pasteboardTypes = sender.draggingPasteboard.types?
-            .map { $0.rawValue }
-            .joined(separator: ", ") ?? "none"
-        let promisedTypes = receivers.flatMap { $0.fileTypes }
-            .joined(separator: ", ")
-        onDebugLog?("Drop pasteboard types: \(pasteboardTypes)")
-        onDebugLog?("Mail promised file types: \(promisedTypes)")
-
-        let destinationURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pdfmailDrops-\(UUID().uuidString)", isDirectory: true)
-
-        do {
-            try FileManager.default.createDirectory(
-                at: destinationURL,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            statusText = "Could not prepare drop folder: \(error.localizedDescription)"
-            return false
-        }
-
-        let group = DispatchGroup()
-        let lock = NSLock()
-        var receivedURLs: [URL] = []
-        var errors: [Error] = []
-
-        for receiver in receivers {
-            group.enter()
-            receiver.receivePromisedFiles(
-                atDestination: destinationURL,
-                options: [:],
-                operationQueue: promiseQueue
-            ) { fileURL, error in
-                lock.lock()
-                receivedURLs.append(fileURL)
-                if let error {
-                    errors.append(error)
-                }
-                lock.unlock()
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) { [weak self] in
-            let emlURLs = receivedURLs.filter { $0.pathExtension.lowercased() == "eml" }
-            let receivedPaths = receivedURLs.map { $0.path }.joined(separator: ", ")
-            self?.onDebugLog?("Received promised files: \(receivedPaths)")
-            self?.pendingPromiseReceivers = []
-            if !emlURLs.isEmpty {
-                self?.onDropFiles?(emlURLs)
-            } else if let error = errors.first {
-                self?.statusText = "Could not receive Mail file: \(error.localizedDescription)"
-                self?.onDebugLog?("Promise receive error: \(error.localizedDescription)")
-            } else {
-                self?.statusText = "Mail did not provide an .eml file."
-            }
-        }
-
-        return true
-    }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
+    private var statusItem: NSStatusItem?
+    private weak var statusButton: NSStatusBarButton?
+    private let statusItemDropView = StatusItemDropView()
+    private let statusMenu = NSMenu()
+    private let statusMenuStatusItem = NSMenuItem(title: "Ready — drag Mail here", action: nil, keyEquivalent: "")
     private var keywords = MailToNotesSettings.keywords
     private let keywordInputField = NSTextField()
     private let addKeywordButton = NSButton()
@@ -391,6 +290,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "pdfmail"
+        window.isReleasedWhenClosed = false
+        window.delegate = self
         window.contentView = rootView
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -398,11 +299,131 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
 
+        configureStatusItem()
         reloadVisibleMessages()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showMainWindow()
+        return true
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === window else {
+            return true
+        }
+
+        sender.orderOut(nil)
+        DispatchQueue.main.async {
+            NSApp.setActivationPolicy(.accessory)
+        }
+        return false
+    }
+
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         true
+    }
+
+    private func configureStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        guard let button = item.button else {
+            return
+        }
+
+        statusItemDropView.translatesAutoresizingMaskIntoConstraints = false
+        statusItemDropView.onDropFiles = { [weak self] urls in
+            self?.convertDroppedEMLFiles(urls)
+        }
+        statusItemDropView.onMailMessageDrop = { [weak self] in
+            self?.convertSelectedMailMessagesFromDrop() ?? false
+        }
+        statusItemDropView.onStatusChange = { [weak self] status in
+            let state: MenuBarConversionState = status.hasPrefix("Receiving") ? .receiving : .failed
+            self?.updateConversionStatus(status, state: state)
+        }
+        statusItemDropView.onDebugLog = { [weak self] message in
+            self?.appendDebugLog(message)
+        }
+        statusItemDropView.onSymbolChange = { [weak button] symbolName, accessibilityDescription in
+            let image = NSImage(
+                systemSymbolName: symbolName,
+                accessibilityDescription: accessibilityDescription
+            )
+            image?.isTemplate = true
+            button?.image = image
+        }
+        statusItemDropView.onClick = { [weak button] in
+            button?.performClick(nil)
+        }
+
+        button.title = "PDF"
+        button.imagePosition = .imageLeading
+        button.addSubview(statusItemDropView)
+        NSLayoutConstraint.activate([
+            statusItemDropView.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            statusItemDropView.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            statusItemDropView.topAnchor.constraint(equalTo: button.topAnchor),
+            statusItemDropView.bottomAnchor.constraint(equalTo: button.bottomAnchor)
+        ])
+
+        statusMenuStatusItem.isEnabled = false
+        statusMenu.addItem(statusMenuStatusItem)
+        statusMenu.addItem(.separator())
+
+        let openAppItem = NSMenuItem(
+            title: "Open pdfmail…",
+            action: #selector(showMainWindow),
+            keyEquivalent: ""
+        )
+        openAppItem.target = self
+        statusMenu.addItem(openAppItem)
+
+        let openOutputItem = NSMenuItem(
+            title: "Open Output Folder",
+            action: #selector(openOutputFolder),
+            keyEquivalent: ""
+        )
+        openOutputItem.target = self
+        statusMenu.addItem(openOutputItem)
+        statusMenu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Quit pdfmail",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: ""
+        )
+        quitItem.target = NSApp
+        statusMenu.addItem(quitItem)
+
+        item.menu = statusMenu
+        statusItem = item
+        statusButton = button
+        updateConversionStatus("Ready — drag Mail messages here", state: .idle)
+    }
+
+    @objc private func showMainWindow() {
+        NSApp.setActivationPolicy(.regular)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func updateConversionStatus(_ text: String, state: MenuBarConversionState) {
+        dropView.statusText = text
+        statusItemDropView.statusText = text
+        statusItemDropView.conversionState = state
+        statusButton?.toolTip = text
+        statusMenuStatusItem.title = shortMenuTitle(text)
+    }
+
+    private func shortMenuTitle(_ text: String) -> String {
+        guard text.count > 30 else {
+            return text
+        }
+        return String(text.prefix(27)) + "..."
     }
 
     private func makeDebugView() -> NSView {
@@ -625,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let queuedCount = try queueDroppedFiles(urls)
             guard queuedCount > 0 else {
-                dropView.statusText = "Drop one or more .eml files to convert."
+                updateConversionStatus("Drop one or more .eml files to convert.", state: .failed)
                 return
             }
 
@@ -633,28 +654,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             guard queueProcess == nil else {
                 shouldRunQueueProcessorAgain = true
-                dropView.statusText = "Queued \(queuedCount) more file\(queuedCount == 1 ? "" : "s"). They will convert next."
+                updateConversionStatus(
+                    "Queued \(queuedCount) more file\(queuedCount == 1 ? "" : "s"). They will convert next.",
+                    state: .converting
+                )
                 debugStatusLabel.stringValue = "Conversion running; more files queued."
                 appendDebugLog("Conversion is already running; queued files will be picked up next.")
                 return
             }
 
-            dropView.statusText = "Queued \(queuedCount) file\(queuedCount == 1 ? "" : "s"). Converting..."
+            updateConversionStatus(
+                "Queued \(queuedCount) file\(queuedCount == 1 ? "" : "s"). Converting...",
+                state: .converting
+            )
             try runQueueProcessor()
         } catch {
-            dropView.statusText = "Could not start conversion: \(error.localizedDescription)"
+            updateConversionStatus("Could not start conversion: \(error.localizedDescription)", state: .failed)
             appendDebugLog("Could not start conversion: \(error.localizedDescription)")
         }
     }
 
     private func convertSelectedMailMessagesFromDrop() -> Bool {
         guard !isMailExportInProgress else {
-            dropView.statusText = "Already receiving selected messages from Mail."
+            updateConversionStatus("Already receiving selected messages from Mail.", state: .receiving)
             return true
         }
 
         isMailExportInProgress = true
-        dropView.statusText = "Receiving selected messages from Mail..."
+        updateConversionStatus("Receiving selected messages from Mail...", state: .receiving)
         appendDebugLog("Detected Mail message drop. Exporting selected Mail messages.")
 
         mailExportQueue.async { [weak self] in
@@ -663,7 +690,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     self?.isMailExportInProgress = false
                     guard !urls.isEmpty else {
-                        self?.dropView.statusText = "Mail did not provide any selected messages."
+                        self?.updateConversionStatus("Mail did not provide any selected messages.", state: .failed)
                         self?.appendDebugLog("Mail selection export returned no messages.")
                         return
                     }
@@ -673,7 +700,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 DispatchQueue.main.async {
                     self?.isMailExportInProgress = false
-                    self?.dropView.statusText = "Could not export Mail selection. Open the Debug tab."
+                    self?.updateConversionStatus("Could not export Mail selection. Open the Debug tab.", state: .failed)
                     self?.appendDebugLog("Could not export Mail selection: \(error.localizedDescription)")
                 }
             }
@@ -736,9 +763,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func queueDroppedFiles(_ urls: [URL]) throws -> Int {
-        let queueDirectory = MailToNotesSettings.applicationSupportDirectory
-            .appendingPathComponent(MailToNotesSettings.appSupportDirectoryName, isDirectory: true)
-            .appendingPathComponent("Incoming", isDirectory: true)
+        let queueDirectory = queueDirectoryURLs()[0]
 
         try FileManager.default.createDirectory(
             at: queueDirectory,
@@ -749,13 +774,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for sourceURL in urls where sourceURL.pathExtension.lowercased() == "eml" {
             let fileBase = uniqueFileBase(for: sourceURL)
             let emlURL = queueDirectory.appendingPathComponent("\(fileBase).eml")
+            let temporaryEMLURL = queueDirectory.appendingPathComponent("\(fileBase).eml.tmp")
             let metadataURL = queueDirectory.appendingPathComponent("\(fileBase).json")
-
-            if FileManager.default.fileExists(atPath: emlURL.path) {
-                try FileManager.default.removeItem(at: emlURL)
-            }
-
-            try FileManager.default.copyItem(at: sourceURL, to: emlURL)
 
             let metadata = DroppedMessageMetadata(
                 subject: sourceURL.deletingPathExtension().lastPathComponent,
@@ -766,11 +786,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(metadata).write(to: metadataURL, options: .atomic)
+            do {
+                try FileManager.default.copyItem(at: sourceURL, to: temporaryEMLURL)
+                try encoder.encode(metadata).write(to: metadataURL, options: .atomic)
+                try FileManager.default.moveItem(at: temporaryEMLURL, to: emlURL)
+            } catch {
+                try? FileManager.default.removeItem(at: temporaryEMLURL)
+                try? FileManager.default.removeItem(at: metadataURL)
+                throw error
+            }
             queuedCount += 1
         }
 
         return queuedCount
+    }
+
+    private func hasQueuedEMLFiles() -> Bool {
+        let currentQueueDirectory = queueDirectoryURLs()[0]
+        guard let queuedFiles = try? FileManager.default.contentsOfDirectory(
+            at: currentQueueDirectory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return false
+        }
+
+        return queuedFiles.contains { $0.pathExtension.lowercased() == "eml" }
+    }
+
+    private func queueDirectoryURLs() -> [URL] {
+        let currentQueueDirectory = MailToNotesSettings.applicationSupportDirectory
+            .appendingPathComponent(MailToNotesSettings.appSupportDirectoryName, isDirectory: true)
+            .appendingPathComponent("Incoming", isDirectory: true)
+        let legacyQueueDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Containers", isDirectory: true)
+            .appendingPathComponent(MailToNotesSettings.legacyExtensionBundleIdentifier, isDirectory: true)
+            .appendingPathComponent("Data", isDirectory: true)
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent(MailToNotesSettings.legacyAppSupportDirectoryName, isDirectory: true)
+            .appendingPathComponent("Incoming", isDirectory: true)
+        return [currentQueueDirectory, legacyQueueDirectory]
     }
 
     private func runQueueProcessor() throws {
@@ -816,30 +872,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 self.queueProcess = nil
-                let hasQueuedFollowUp = self.shouldRunQueueProcessorAgain
+                let hasQueuedFollowUp = self.shouldRunQueueProcessorAgain || self.hasQueuedEMLFiles()
                 self.shouldRunQueueProcessorAgain = false
 
                 if process.terminationStatus == 0 {
                     self.appendDebugLog("Conversion finished successfully.")
 
                     if hasQueuedFollowUp {
-                        self.dropView.statusText = "Converting newly queued files..."
+                        self.updateConversionStatus("Converting newly queued files...", state: .converting)
                         self.debugStatusLabel.stringValue = "Conversion running..."
                         self.appendDebugLog("Starting another conversion pass for files queued during processing.")
                         do {
                             try self.runQueueProcessor()
                         } catch {
-                            self.dropView.statusText = "Could not continue conversion: \(error.localizedDescription)"
+                            self.updateConversionStatus(
+                                "Could not continue conversion: \(error.localizedDescription)",
+                                state: .failed
+                            )
                             self.debugStatusLabel.stringValue = "Could not continue conversion."
                             self.appendDebugLog("Could not continue conversion: \(error.localizedDescription)")
                         }
                         return
                     }
 
-                    self.dropView.statusText = "Conversion complete."
+                    self.updateConversionStatus("Conversion complete.", state: .succeeded)
                     self.debugStatusLabel.stringValue = "Conversion complete."
                 } else {
-                    self.dropView.statusText = "Conversion failed. Open the Debug tab."
+                    self.updateConversionStatus("Conversion failed. Open the Debug tab.", state: .failed)
                     self.debugStatusLabel.stringValue = "Conversion failed."
                     self.appendDebugLog("Conversion failed with exit code \(process.terminationStatus).")
                     if hasQueuedFollowUp {

@@ -63,6 +63,12 @@ To save a reusable copy, open the shortcut in Shortcuts and choose **File > Expo
 
 The `mailkit/` folder contains a MailKit prototype for purchase-like incoming messages. MailKit does not add a custom right-click command for selected messages; it runs as Mail downloads messages. The extension queues matching raw emails, then the processor converts them to PDFs. Apple Notes creation is off by default and can be toggled in `pdfmail.app`; when enabled, the generated PDF is sent to a supported Notes shortcut when present, otherwise a text-only Apple Note is created.
 
+When `pdfmail.app` is running, its envelope icon in the macOS menu bar is also a
+drop target. Drag messages from Apple Mail onto the icon to convert them
+immediately with the saved settings. Closing the settings window keeps the menu
+bar utility running and removes its Dock icon; use the menu-bar icon to reopen
+it or quit.
+
 ```bash
 # Requires the Xcode license to be accepted first.
 mailkit/Scripts/build_mailkit_app.sh --install
@@ -70,6 +76,37 @@ mailkit/Scripts/process_mailkit_queue.py
 ```
 
 See `mailkit/README.md` for setup details.
+
+### Programmatic access and MCP
+
+`pdfmail_automation.py` provides a JSON-returning command line interface:
+
+```bash
+mailkit/Scripts/pdfmail_automation.py status
+mailkit/Scripts/pdfmail_automation.py settings
+mailkit/Scripts/pdfmail_automation.py convert /absolute/path/to/message.eml
+```
+
+It can also run as a local stdio MCP server. After installing the app, use this
+server entry in an MCP client (adjust the Python path if needed):
+
+```json
+{
+  "mcpServers": {
+    "pdfmail": {
+      "command": "/opt/homebrew/bin/python3",
+      "args": [
+        "/Applications/pdfmail.app/Contents/Resources/pdfmail_automation.py",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+The server exposes `convert_eml`, `get_status`, `get_settings`, and
+`process_queue`. It is local-only, receives file paths through stdio, and never
+includes the historical `MailToNotes` queue automatically.
 
 ### macOS (Double-click)
 
