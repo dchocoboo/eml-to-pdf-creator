@@ -21,8 +21,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 
-NAVIGATION_TIMEOUT_MS = 15_000
-SETTLE_TIMEOUT_MS = 2_000
+ONLINE_LOAD_TIMEOUT_MS = 15_000
+OFFLINE_NAVIGATION_TIMEOUT_MS = 15_000
+OFFLINE_SETTLE_TIMEOUT_MS = 2_000
 
 
 def is_remote_resource_url(url: str) -> bool:
@@ -31,7 +32,7 @@ def is_remote_resource_url(url: str) -> bool:
 
 
 def block_remote_resources(page) -> None:
-    """Keep rendering offline while preserving local, data, and CID-derived content."""
+    """Keep fallback rendering offline while allowing local and embedded content."""
     def handle_route(route, request) -> None:
         if is_remote_resource_url(request.url):
             route.abort()
@@ -39,6 +40,19 @@ def block_remote_resources(page) -> None:
             route.continue_()
 
     page.route("**/*", handle_route)
+
+
+def render_loaded_page(page, pdf_path: str, width: int) -> None:
+    """Size an already navigated page and write its one-page PDF."""
+    full_height = page.evaluate('document.documentElement.scrollHeight')
+    page.set_viewport_size({"width": width, "height": full_height})
+    page.pdf(
+        path=pdf_path,
+        width=f"{width}px",
+        height=f"{full_height + 100}px",
+        print_background=True,
+        margin={"top": "20px", "right": "20px", "bottom": "20px", "left": "20px"}
+    )
 
 
 def parse_eml(eml_path: str) -> EmailMessage:
@@ -282,45 +296,50 @@ def render_to_pdf(html_content: str, output_base: str, width: int = 800):
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:
-            page = browser.new_page(viewport={"width": width, "height": 800})
-            block_remote_resources(page)
-
-            # Create a temporary HTML file. The request route above permits this
-            # local file and embedded data URLs, but aborts all remote artwork.
+            # The first page is online-first so normal email artwork can render.
+            # A 15-second `load` deadline bounds stalled remote resources.
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
                 f.write(html_content)
                 temp_html_path = f.name
 
             try:
+                local_url = f'file://{temp_html_path}'
+                online_page = browser.new_page(viewport={"width": width, "height": 800})
                 try:
-                    page.goto(
-                        f'file://{temp_html_path}',
-                        wait_until="domcontentloaded",
-                        timeout=NAVIGATION_TIMEOUT_MS,
+                    online_page.goto(
+                        local_url,
+                        wait_until="load",
+                        timeout=ONLINE_LOAD_TIMEOUT_MS,
                     )
                 except PlaywrightTimeoutError:
-                    print("Warning: local HTML navigation timed out; rendering available content.")
-
-                try:
-                    page.wait_for_load_state("load", timeout=SETTLE_TIMEOUT_MS)
-                except PlaywrightTimeoutError:
-                    print("Warning: local HTML did not fully settle; rendering available content.")
-
-                # Get the full page height
-                full_height = page.evaluate('document.documentElement.scrollHeight')
-
-                # Resize viewport to full content height before generating the PDF
-                page.set_viewport_size({"width": width, "height": full_height})
-
-                # Generate PDF without page breaks
-                # Using a very long page to avoid breaks
-                page.pdf(
-                    path=pdf_path,
-                    width=f"{width}px",
-                    height=f"{full_height + 100}px",  # Add some padding
-                    print_background=True,
-                    margin={"top": "20px", "right": "20px", "bottom": "20px", "left": "20px"}
-                )
+                    online_page.close()
+                    print("Online HTML load timed out; switching to offline fallback.")
+                    offline_page = browser.new_page(viewport={"width": width, "height": 800})
+                    try:
+                        block_remote_resources(offline_page)
+                        try:
+                            offline_page.goto(
+                                local_url,
+                                wait_until="domcontentloaded",
+                                timeout=OFFLINE_NAVIGATION_TIMEOUT_MS,
+                            )
+                        except PlaywrightTimeoutError:
+                            print("Warning: offline HTML navigation timed out; rendering available content.")
+                        try:
+                            offline_page.wait_for_load_state(
+                                "load",
+                                timeout=OFFLINE_SETTLE_TIMEOUT_MS,
+                            )
+                        except PlaywrightTimeoutError:
+                            print("Warning: offline HTML did not fully settle; rendering available content.")
+                        render_loaded_page(offline_page, pdf_path, width)
+                    finally:
+                        offline_page.close()
+                else:
+                    try:
+                        render_loaded_page(online_page, pdf_path, width)
+                    finally:
+                        online_page.close()
                 print(f"Created PDF: {pdf_path}")
             finally:
                 Path(temp_html_path).unlink(missing_ok=True)

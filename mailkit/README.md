@@ -114,7 +114,7 @@ process the historical `MailToNotes` queue as a one-time migration, use
 
 The processor reuses `eml_to_image.py`, creates PDFs in the configured output folder, optionally sends PDFs to the `pdfmail Create Note` shortcut, then removes processed queue files. If neither supported shortcut exists, it creates text-only Apple Notes instead. A failed email stays queued for retry, but later queued emails are still attempted; the pass exits nonzero when any email fails. In the app's Debug tab, use **Refresh Queue** to inspect pending subjects, **Retry Queue** to retry them, or **Clear Queue…** to permanently clear only the current pdfmail queue (after confirmation). The CLI/MCP `clear-queue`/`clear_queue` action has the same current-queue-only behavior and refuses while processing. See the main README's **Apple Notes Shortcut** section for the exact Shortcuts setup and export instructions.
 
-Rendering is intentionally offline: remote `http` and `https` resources in an email are blocked, so external artwork or tracking pixels may be blank. Embedded/CID content, text, and clickable links remain available in the PDF.
+Rendering is online-first: pdfmail allows remote email artwork when the local HTML completes loading within 15 seconds. On a timeout it closes that page and retries offline, blocking remote `http` and `https` resources; external artwork or tracking pixels may then be blank. Embedded/CID content, text, and clickable links remain available in the PDF.
 
 ## Purchase Matching
 

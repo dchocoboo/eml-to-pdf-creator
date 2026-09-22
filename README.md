@@ -63,7 +63,7 @@ To save a reusable copy, open the shortcut in Shortcuts and choose **File > Expo
 
 The `mailkit/` folder contains a MailKit prototype for purchase-like incoming messages. MailKit does not add a custom right-click command for selected messages; it runs as Mail downloads messages. The extension queues matching raw emails, then the processor converts them to PDFs. Apple Notes creation is off by default and can be toggled in `pdfmail.app`; when enabled, the generated PDF is sent to a supported Notes shortcut when present, otherwise a text-only Apple Note is created.
 
-For deterministic, private conversion, PDF rendering never fetches remote `http` or `https` resources from email HTML. Remote artwork and tracking images can therefore appear blank; embedded/CID content, local content, text, and links are retained.
+PDF rendering is online-first: it allows remote email artwork when the local HTML finishes loading within 15 seconds. If that load times out, pdfmail closes that page and retries with remote `http` and `https` resources blocked; external artwork and tracking images can then appear blank, while embedded/CID content, local content, text, and links are retained.
 
 When `pdfmail.app` is running, its envelope icon in the macOS menu bar is also a
 drop target. Drag messages from Apple Mail onto the icon to convert them
