@@ -72,6 +72,7 @@ mailkit/Scripts/pdfmail_automation.py status
 mailkit/Scripts/pdfmail_automation.py settings
 mailkit/Scripts/pdfmail_automation.py convert /absolute/path/to/message.eml
 mailkit/Scripts/pdfmail_automation.py process-queue
+mailkit/Scripts/pdfmail_automation.py clear-queue
 ```
 
 All CLI responses are JSON. `convert` uses the same current queue, saved output
@@ -94,10 +95,10 @@ To connect an MCP client to the installed app's local stdio server:
 }
 ```
 
-Available tools are `convert_eml`, `get_status`, `get_settings`, and
-`process_queue`. The server has no network listener; the MCP client launches it
-locally and communicates over stdio. It never processes the legacy queue unless
-that separate migration is run explicitly.
+Available tools are `convert_eml`, `get_status`, `get_settings`, `process_queue`,
+and `clear_queue`. The server has no network listener; the MCP client launches it
+locally and communicates over stdio. Queue actions never process or clear the
+legacy queue unless that separate migration is run explicitly.
 
 ## Process Queued Mail
 
@@ -111,7 +112,7 @@ The normal command processes only the current `pdfmail` queue. To deliberately
 process the historical `MailToNotes` queue as a one-time migration, use
 `mailkit/Scripts/process_mailkit_queue.py --include-legacy`.
 
-The processor reuses `eml_to_image.py`, creates PDFs in the configured output folder, optionally sends PDFs to the `pdfmail Create Note` shortcut, then removes processed queue files. If neither supported shortcut exists, it creates text-only Apple Notes instead. See the main README's **Apple Notes Shortcut** section for the exact Shortcuts setup and export instructions.
+The processor reuses `eml_to_image.py`, creates PDFs in the configured output folder, optionally sends PDFs to the `pdfmail Create Note` shortcut, then removes processed queue files. If neither supported shortcut exists, it creates text-only Apple Notes instead. A failed email stays queued for retry, but later queued emails are still attempted; the pass exits nonzero when any email fails. In the app's Debug tab, use **Refresh Queue** to inspect pending subjects, **Retry Queue** to retry them, or **Clear Queue…** to permanently clear only the current pdfmail queue (after confirmation). The CLI/MCP `clear-queue`/`clear_queue` action has the same current-queue-only behavior and refuses while processing. See the main README's **Apple Notes Shortcut** section for the exact Shortcuts setup and export instructions.
 
 ## Purchase Matching
 

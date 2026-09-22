@@ -85,6 +85,8 @@ See `mailkit/README.md` for setup details.
 mailkit/Scripts/pdfmail_automation.py status
 mailkit/Scripts/pdfmail_automation.py settings
 mailkit/Scripts/pdfmail_automation.py convert /absolute/path/to/message.eml
+mailkit/Scripts/pdfmail_automation.py process-queue
+mailkit/Scripts/pdfmail_automation.py clear-queue
 ```
 
 It can also run as a local stdio MCP server. After installing the app, use this
@@ -104,9 +106,11 @@ server entry in an MCP client (adjust the Python path if needed):
 }
 ```
 
-The server exposes `convert_eml`, `get_status`, `get_settings`, and
-`process_queue`. It is local-only, receives file paths through stdio, and never
-includes the historical `MailToNotes` queue automatically.
+The server exposes `convert_eml`, `get_status`, `get_settings`, `process_queue`,
+and `clear_queue`. It is local-only, receives file paths through stdio, and
+never includes the historical `MailToNotes` queue automatically. `clear_queue`
+permanently deletes only the current `pdfmail` Incoming queue, and refuses while
+the queue processor is running.
 
 ### macOS (Double-click)
 

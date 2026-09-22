@@ -104,31 +104,36 @@ def process_queue() -> int:
         return 0
 
     processed_subjects: list[str] = []
+    failed_items: list[tuple[Path, str]] = []
 
     for eml_path in eml_files:
-        metadata = read_metadata(eml_path)
-        pdf_path = output_dir / f"{eml_path.stem}.pdf"
         print(f"Processing {eml_path.name}")
+        try:
+            metadata = read_metadata(eml_path)
+            pdf_path = output_dir / f"{eml_path.stem}.pdf"
+            convert_eml(str(eml_path), str(output_dir))
+            if create_apple_notes():
+                try:
+                    create_note(metadata, pdf_path)
+                except Exception as error:
+                    print(f"Warning: PDF was created but Apple Notes update failed: {error}")
+            else:
+                print("Apple Notes creation is currently disabled; PDF only.")
 
-        convert_eml(str(eml_path), str(output_dir))
-        if create_apple_notes():
-            try:
-                create_note(metadata, pdf_path)
-            except Exception as error:
-                print(f"Warning: PDF was created but Apple Notes update failed: {error}")
-        else:
-            print("Apple Notes creation is currently disabled; PDF only.")
+            processed_subjects.append(metadata.get("subject") or eml_path.stem)
+            metadata_path = eml_path.with_suffix(".json")
+            if metadata_path.exists():
+                metadata_path.unlink()
+            if eml_path.exists():
+                eml_path.unlink()
+        except Exception as error:
+            failed_items.append((eml_path, str(error)))
+            print(f"Failed {eml_path.name}: {error}", file=sys.stderr)
 
-        processed_subjects.append(metadata.get("subject") or eml_path.stem)
-
-        metadata_path = eml_path.with_suffix(".json")
-        if metadata_path.exists():
-            metadata_path.unlink()
-        if eml_path.exists():
-            eml_path.unlink()
-
-    notify_processed(processed_subjects)
-    return 0
+    if processed_subjects:
+        notify_processed(processed_subjects)
+    print(f"Queue summary: {len(processed_subjects)} succeeded, {len(failed_items)} failed.")
+    return 1 if failed_items else 0
 
 
 def selected_queue_directories() -> tuple[Path, ...]:

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 
 final class EMLDropView: NSView {
@@ -72,7 +73,7 @@ final class EMLDropView: NSView {
 
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTabViewDelegate {
     private var window: NSWindow?
     private var statusItem: NSStatusItem?
     private weak var statusButton: NSStatusBarButton?
@@ -83,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let dropView = EMLDropView()
     private let debugTextView = NSTextView()
     private let debugStatusLabel = NSTextField(labelWithString: "Ready")
+    private let debugQueueLabel = NSTextField(wrappingLabelWithString: "Queue not loaded.")
     private let mailExportQueue = DispatchQueue(label: "pdfmail Mail export", qos: .userInitiated)
     private var queueProcess: Process?
     private var shouldRunQueueProcessorAgain = false
@@ -128,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 660, height: 680))
         let tabView = NSTabView(frame: rootView.bounds)
+        tabView.delegate = self
         tabView.translatesAutoresizingMaskIntoConstraints = false
         rootView.addSubview(tabView)
 
@@ -333,6 +336,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 610))
 
         debugStatusLabel.textColor = .secondaryLabelColor
+        debugQueueLabel.textColor = .secondaryLabelColor
+        debugQueueLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        debugQueueLabel.maximumNumberOfLines = 4
+        debugQueueLabel.lineBreakMode = .byTruncatingTail
+
+        let queueScrollView = NSScrollView()
+        queueScrollView.borderType = .bezelBorder
+        queueScrollView.hasVerticalScroller = true
+        queueScrollView.documentView = debugQueueLabel
 
         debugTextView.isEditable = false
         debugTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -345,12 +357,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         debugScrollView.hasVerticalScroller = true
         debugScrollView.documentView = debugTextView
 
-        let runQueuedButton = NSButton(
-            title: "Run Queued Conversion",
+        let retryQueueButton = NSButton(
+            title: "Retry Queue",
             target: self,
             action: #selector(runQueuedConversionFromDebug)
         )
-        runQueuedButton.bezelStyle = .rounded
+        retryQueueButton.bezelStyle = .rounded
+
+        let refreshQueueButton = NSButton(
+            title: "Refresh Queue",
+            target: self,
+            action: #selector(refreshQueueFromDebug)
+        )
+        refreshQueueButton.bezelStyle = .rounded
+
+        let clearQueueButton = NSButton(
+            title: "Clear Queue…",
+            target: self,
+            action: #selector(clearQueueFromDebug)
+        )
+        clearQueueButton.bezelStyle = .rounded
 
         let openOutputButton = NSButton(
             title: "Open Output Folder",
@@ -366,12 +392,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         clearButton.bezelStyle = .rounded
 
-        let buttonStack = NSStackView(views: [runQueuedButton, openOutputButton, clearButton])
+        let buttonStack = NSStackView(views: [retryQueueButton, refreshQueueButton, clearQueueButton, openOutputButton, clearButton])
         buttonStack.orientation = .horizontal
         buttonStack.spacing = 8
         buttonStack.alignment = .centerY
 
-        [debugStatusLabel, debugScrollView, buttonStack].forEach {
+        [debugStatusLabel, queueScrollView, debugScrollView, buttonStack].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -381,7 +407,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             debugStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             debugStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
 
-            debugScrollView.topAnchor.constraint(equalTo: debugStatusLabel.bottomAnchor, constant: 12),
+            queueScrollView.topAnchor.constraint(equalTo: debugStatusLabel.bottomAnchor, constant: 12),
+            queueScrollView.leadingAnchor.constraint(equalTo: debugStatusLabel.leadingAnchor),
+            queueScrollView.trailingAnchor.constraint(equalTo: debugStatusLabel.trailingAnchor),
+            queueScrollView.heightAnchor.constraint(equalToConstant: 86),
+
+            debugScrollView.topAnchor.constraint(equalTo: queueScrollView.bottomAnchor, constant: 12),
             debugScrollView.leadingAnchor.constraint(equalTo: debugStatusLabel.leadingAnchor),
             debugScrollView.trailingAnchor.constraint(equalTo: debugStatusLabel.trailingAnchor),
             debugScrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor, constant: -16),
@@ -390,6 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             buttonStack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -24)
         ])
 
+        refreshDebugQueue()
         return view
     }
 
@@ -399,19 +431,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func runQueuedConversionFromDebug() {
         guard queueProcess == nil else {
-            appendDebugLog("Conversion is already running.")
+            debugStatusLabel.stringValue = "Queue processing is already running. Retry is unavailable."
+            appendDebugLog("Retry refused because queue processing is already running.")
+            return
+        }
+
+        guard hasQueuedEMLFiles() else {
+            debugStatusLabel.stringValue = "Queue is empty; there is nothing to retry."
+            appendDebugLog("Retry requested, but the current pdfmail queue is empty.")
+            refreshDebugQueue()
             return
         }
 
         persistSettings()
 
         do {
-            appendDebugLog("Running queued conversion manually.")
+            appendDebugLog("Retrying the current pdfmail queue manually.")
             try runQueueProcessor()
         } catch {
             appendDebugLog("Could not start conversion: \(error.localizedDescription)")
             debugStatusLabel.stringValue = "Could not start conversion."
         }
+    }
+
+    @objc private func refreshQueueFromDebug() {
+        refreshDebugQueue()
+        appendDebugLog("Refreshed the current pdfmail queue.")
+    }
+
+    @objc private func clearQueueFromDebug() {
+        guard queueProcess == nil else {
+            debugStatusLabel.stringValue = "Queue processing is running; clear is unavailable."
+            appendDebugLog("Clear queue refused because queue processing is already running.")
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Clear Current pdfmail Queue?"
+        alert.informativeText = "This permanently removes pending emails, metadata, and temporary artifacts from the current pdfmail Incoming queue. The legacy MailToNotes queue is not affected."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear Queue")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        do {
+            let cleared = try withCurrentQueueProcessorLock { queueDirectory in
+                var pendingEmails = 0
+                var staleArtifacts = 0
+                guard FileManager.default.fileExists(atPath: queueDirectory.path) else {
+                    return (pendingEmails, staleArtifacts)
+                }
+                for fileURL in try FileManager.default.contentsOfDirectory(at: queueDirectory, includingPropertiesForKeys: nil) {
+                    guard !fileURL.hasDirectoryPath else { continue }
+                    if fileURL.pathExtension.lowercased() == "eml" {
+                        try FileManager.default.removeItem(at: fileURL)
+                        pendingEmails += 1
+                    } else if fileURL.lastPathComponent.hasSuffix(".json") || fileURL.lastPathComponent.hasSuffix(".eml.tmp") || fileURL.lastPathComponent.hasSuffix(".json.tmp") {
+                        try FileManager.default.removeItem(at: fileURL)
+                        staleArtifacts += 1
+                    }
+                }
+                return (pendingEmails, staleArtifacts)
+            }
+            debugStatusLabel.stringValue = "Cleared \(cleared.0) pending email\(cleared.0 == 1 ? "" : "s") and \(cleared.1) stale artifact\(cleared.1 == 1 ? "" : "s")."
+            appendDebugLog(debugStatusLabel.stringValue)
+        } catch {
+            debugStatusLabel.stringValue = "Could not clear queue."
+            appendDebugLog("Could not clear current queue: \(error.localizedDescription)")
+        }
+        refreshDebugQueue()
     }
 
     @objc private func openOutputFolder() {
@@ -614,13 +704,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             queuedCount += 1
         }
 
+        refreshDebugQueue()
         return queuedCount
     }
 
     private func hasQueuedEMLFiles() -> Bool {
-        let currentQueueDirectory = queueDirectoryURLs()[0]
+        let queueDirectory = currentQueueDirectory()
         guard let queuedFiles = try? FileManager.default.contentsOfDirectory(
-            at: currentQueueDirectory,
+            at: queueDirectory,
             includingPropertiesForKeys: nil
         ) else {
             return false
@@ -629,10 +720,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return queuedFiles.contains { $0.pathExtension.lowercased() == "eml" }
     }
 
-    private func queueDirectoryURLs() -> [URL] {
-        let currentQueueDirectory = MailToNotesSettings.applicationSupportDirectory
+    private func currentQueueDirectory() -> URL {
+        MailToNotesSettings.applicationSupportDirectory
             .appendingPathComponent(MailToNotesSettings.appSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("Incoming", isDirectory: true)
+    }
+
+    private func withCurrentQueueProcessorLock<T>(_ body: (URL) throws -> T) throws -> T {
+        let queueDirectory = currentQueueDirectory()
+        let supportDirectory = queueDirectory.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        let lockURL = supportDirectory.appendingPathComponent("processor.lock")
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw MailToNotesHostError.queueLockUnavailable
+        }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            throw MailToNotesHostError.queueProcessorRunning
+        }
+        defer { flock(descriptor, LOCK_UN) }
+        return try body(queueDirectory)
+    }
+
+    private func refreshDebugQueue() {
+        let queueDirectory = currentQueueDirectory()
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: queueDirectory,
+            includingPropertiesForKeys: nil
+        ))?.filter { $0.pathExtension.lowercased() == "eml" }.sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
+        guard !files.isEmpty else {
+            debugQueueLabel.stringValue = "Current pdfmail queue: 0 pending emails"
+            return
+        }
+        let itemLines = files.map { fileURL -> String in
+            let metadataURL = fileURL.deletingPathExtension().appendingPathExtension("json")
+            let subject: String
+            if let data = try? Data(contentsOf: metadataURL),
+               let metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let value = metadata["subject"] as? String,
+               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                subject = value
+            } else {
+                subject = fileURL.deletingPathExtension().lastPathComponent
+            }
+            return "• \(subject) (\(fileURL.lastPathComponent))"
+        }
+        debugQueueLabel.stringValue = "Current pdfmail queue: \(files.count) pending email\(files.count == 1 ? "" : "s")\n" + itemLines.joined(separator: "\n")
+    }
+
+    private func queueDirectoryURLs() -> [URL] {
+        let queueDirectory = currentQueueDirectory()
         let legacyQueueDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Containers", isDirectory: true)
@@ -642,7 +780,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .appendingPathComponent("Application Support", isDirectory: true)
             .appendingPathComponent(MailToNotesSettings.legacyAppSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("Incoming", isDirectory: true)
-        return [currentQueueDirectory, legacyQueueDirectory]
+        return [queueDirectory, legacyQueueDirectory]
     }
 
     private func runQueueProcessor() throws {
@@ -688,6 +826,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
 
                 self.queueProcess = nil
+                self.refreshDebugQueue()
                 let hasQueuedFollowUp = self.shouldRunQueueProcessorAgain || self.hasQueuedEMLFiles()
                 self.shouldRunQueueProcessorAgain = false
 
@@ -731,6 +870,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             queueProcess = nil
             pipe.fileHandleForReading.readabilityHandler = nil
             throw error
+        }
+    }
+
+    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        if tabViewItem?.identifier as? String == "debug" {
+            refreshDebugQueue()
         }
     }
 
@@ -846,6 +991,8 @@ private enum MailToNotesHostError: LocalizedError {
     case processorNotFound
     case pythonNotFound
     case mailSelectionExportFailed(String)
+    case queueProcessorRunning
+    case queueLockUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -855,6 +1002,10 @@ private enum MailToNotesHostError: LocalizedError {
             return "A Python 3 executable could not be found."
         case .mailSelectionExportFailed(let message):
             return message
+        case .queueProcessorRunning:
+            return "The pdfmail queue processor is running. Retry after it finishes."
+        case .queueLockUnavailable:
+            return "The pdfmail queue lock could not be opened."
         }
     }
 }

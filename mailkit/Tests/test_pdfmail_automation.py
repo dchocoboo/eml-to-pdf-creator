@@ -31,7 +31,7 @@ class PdfmailAutomationTests(unittest.TestCase):
         )
         self.assertEqual(
             [tool["name"] for tool in tools["result"]["tools"]],
-            ["convert_eml", "get_status", "get_settings", "process_queue"],
+            ["convert_eml", "get_status", "get_settings", "process_queue", "clear_queue"],
         )
 
     def test_enqueue_uses_only_current_queue_and_writes_metadata(self) -> None:
@@ -72,6 +72,49 @@ class PdfmailAutomationTests(unittest.TestCase):
             }
         )
         self.assertTrue(response["result"]["isError"])
+
+    def test_clear_queue_removes_only_supported_current_queue_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            queue = root / "current" / "Incoming"
+            queue.mkdir(parents=True)
+            lock = root / "current" / "processor.lock"
+            legacy = root / "legacy" / "Incoming"
+            legacy.mkdir(parents=True)
+            for name in ("one.eml", "one.json", "orphan.json", "writing.eml.tmp", "writing.json.tmp"):
+                (queue / name).write_text("x", encoding="utf-8")
+            (legacy / "keep.eml").write_text("x", encoding="utf-8")
+
+            with patch.object(automation, "QUEUE_DIR", queue), patch.object(automation, "PDFMAIL_DIR", lock.parent), patch.object(automation, "PROCESSOR_LOCK", lock):
+                result = automation.clear_current_queue()
+
+            self.assertEqual(result["clearedPendingEmails"], 1)
+            self.assertEqual(result["clearedStaleArtifacts"], 4)
+            self.assertEqual(list(queue.iterdir()), [])
+            self.assertTrue((legacy / "keep.eml").exists())
+
+    def test_clear_queue_refuses_when_processor_lock_is_held(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            queue = root / "Incoming"
+            queue.mkdir()
+            queued = queue / "keep.eml"
+            queued.write_text("x", encoding="utf-8")
+            lock = root / "processor.lock"
+            with (
+                patch.object(automation, "QUEUE_DIR", queue),
+                patch.object(automation, "PDFMAIL_DIR", root),
+                patch.object(automation, "PROCESSOR_LOCK", lock),
+                patch.object(automation.fcntl, "flock", side_effect=BlockingIOError),
+                self.assertRaisesRegex(RuntimeError, "processor is running"),
+            ):
+                automation.clear_current_queue()
+            self.assertTrue(queued.exists())
+
+    def test_clear_queue_mcp_metadata_is_destructive(self) -> None:
+        clear_tool = next(tool for tool in automation.TOOLS if tool["name"] == "clear_queue")
+        self.assertTrue(clear_tool["annotations"]["destructiveHint"])
+        self.assertFalse(clear_tool["annotations"]["readOnlyHint"])
 
 
 if __name__ == "__main__":

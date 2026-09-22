@@ -121,6 +121,37 @@ def status() -> dict[str, Any]:
     }
 
 
+def clear_current_queue() -> dict[str, Any]:
+    """Clear only the current pdfmail queue while its processor is idle."""
+    PDFMAIL_DIR.mkdir(parents=True, exist_ok=True)
+    with PROCESSOR_LOCK.open("a+", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("The pdfmail queue processor is running; retry after it finishes.") from error
+        try:
+            pending_emails = 0
+            stale_artifacts = 0
+            if QUEUE_DIR.exists():
+                for path in list(QUEUE_DIR.iterdir()):
+                    if not path.is_file():
+                        continue
+                    if path.suffix.lower() == ".eml":
+                        path.unlink()
+                        pending_emails += 1
+                    elif path.name.endswith((".json", ".eml.tmp", ".json.tmp")):
+                        path.unlink()
+                        stale_artifacts += 1
+            return {
+                "queueDirectory": str(QUEUE_DIR),
+                "clearedPendingEmails": pending_emails,
+                "clearedStaleArtifacts": stale_artifacts,
+                "processorRunning": False,
+            }
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def safe_stem(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-")
     return (cleaned or "email")[:80]
@@ -246,6 +277,12 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
     },
+    {
+        "name": "clear_queue",
+        "description": "Permanently remove pending emails and metadata/temp artifacts from only pdfmail's current queue. Refuses while processing.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True},
+    },
 ]
 
 
@@ -268,6 +305,8 @@ def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return tool_result(read_settings())
     if name == "process_queue":
         return tool_result(process_current_queue())
+    if name == "clear_queue":
+        return tool_result(clear_current_queue())
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -287,7 +326,7 @@ def handle_mcp_message(message: dict[str, Any]) -> dict[str, Any] | None:
                 "protocolVersion": protocol_version,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": "pdfmail", "version": "1.0.0"},
-                "instructions": "Convert local .eml files using pdfmail's saved settings. Only the current pdfmail queue is processed.",
+                "instructions": "Convert or recover local .eml files using pdfmail's saved settings. Queue actions affect only the current pdfmail queue.",
             }
         elif method == "ping":
             result = {}
@@ -344,6 +383,7 @@ def main() -> int:
     convert_parser = subparsers.add_parser("convert", help="Convert local .eml files now.")
     convert_parser.add_argument("paths", nargs="+")
     subparsers.add_parser("process-queue", help="Process the current pdfmail queue.")
+    subparsers.add_parser("clear-queue", help="Permanently clear the current pdfmail queue when it is idle.")
     subparsers.add_parser("mcp", help="Run the local stdio MCP server.")
     arguments = parser.parse_args()
 
@@ -356,6 +396,8 @@ def main() -> int:
             print_json(convert(arguments.paths))
         elif arguments.command == "process-queue":
             print_json(process_current_queue())
+        elif arguments.command == "clear-queue":
+            print_json(clear_current_queue())
         elif arguments.command == "mcp":
             return run_mcp_server()
     except Exception as error:
