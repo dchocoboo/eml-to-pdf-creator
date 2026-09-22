@@ -10,7 +10,6 @@ import argparse
 import base64
 import email
 import html
-import os
 import re
 import tempfile
 from email import policy
@@ -18,7 +17,28 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Optional
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+
+
+NAVIGATION_TIMEOUT_MS = 15_000
+SETTLE_TIMEOUT_MS = 2_000
+
+
+def is_remote_resource_url(url: str) -> bool:
+    """Return whether a browser request would leave the local renderer."""
+    return url.lower().startswith(("http://", "https://"))
+
+
+def block_remote_resources(page) -> None:
+    """Keep rendering offline while preserving local, data, and CID-derived content."""
+    def handle_route(route, request) -> None:
+        if is_remote_resource_url(request.url):
+            route.abort()
+        else:
+            route.continue_()
+
+    page.route("**/*", handle_route)
 
 
 def parse_eml(eml_path: str) -> EmailMessage:
@@ -261,39 +281,50 @@ def render_to_pdf(html_content: str, output_base: str, width: int = 800):
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": width, "height": 800})
-
-        # Create a temporary HTML file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-            f.write(html_content)
-            temp_html_path = f.name
-        
         try:
-            # Load the HTML file
-            page.goto(f'file://{temp_html_path}')
-            
-            # Wait for any images to load
-            page.wait_for_load_state('networkidle')
-            
-            # Get the full page height
-            full_height = page.evaluate('document.documentElement.scrollHeight')
-            
-            # Resize viewport to full content height before generating the PDF
-            page.set_viewport_size({"width": width, "height": full_height})
-            
-            # Generate PDF without page breaks
-            # Using a very long page to avoid breaks
-            page.pdf(
-                path=pdf_path,
-                width=f"{width}px",
-                height=f"{full_height + 100}px",  # Add some padding
-                print_background=True,
-                margin={"top": "20px", "right": "20px", "bottom": "20px", "left": "20px"}
-            )
-            print(f"Created PDF: {pdf_path}")
-            
+            page = browser.new_page(viewport={"width": width, "height": 800})
+            block_remote_resources(page)
+
+            # Create a temporary HTML file. The request route above permits this
+            # local file and embedded data URLs, but aborts all remote artwork.
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                f.write(html_content)
+                temp_html_path = f.name
+
+            try:
+                try:
+                    page.goto(
+                        f'file://{temp_html_path}',
+                        wait_until="domcontentloaded",
+                        timeout=NAVIGATION_TIMEOUT_MS,
+                    )
+                except PlaywrightTimeoutError:
+                    print("Warning: local HTML navigation timed out; rendering available content.")
+
+                try:
+                    page.wait_for_load_state("load", timeout=SETTLE_TIMEOUT_MS)
+                except PlaywrightTimeoutError:
+                    print("Warning: local HTML did not fully settle; rendering available content.")
+
+                # Get the full page height
+                full_height = page.evaluate('document.documentElement.scrollHeight')
+
+                # Resize viewport to full content height before generating the PDF
+                page.set_viewport_size({"width": width, "height": full_height})
+
+                # Generate PDF without page breaks
+                # Using a very long page to avoid breaks
+                page.pdf(
+                    path=pdf_path,
+                    width=f"{width}px",
+                    height=f"{full_height + 100}px",  # Add some padding
+                    print_background=True,
+                    margin={"top": "20px", "right": "20px", "bottom": "20px", "left": "20px"}
+                )
+                print(f"Created PDF: {pdf_path}")
+            finally:
+                Path(temp_html_path).unlink(missing_ok=True)
         finally:
-            os.unlink(temp_html_path)
             browser.close()
 
 
