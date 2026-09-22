@@ -84,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTa
     private let dropView = EMLDropView()
     private let debugTextView = NSTextView()
     private let debugStatusLabel = NSTextField(labelWithString: "Ready")
-    private let debugQueueLabel = NSTextField(wrappingLabelWithString: "Queue not loaded.")
+    private let debugQueueTextView = NSTextView()
     private let mailExportQueue = DispatchQueue(label: "pdfmail Mail export", qos: .userInitiated)
     private var queueProcess: Process?
     private var shouldRunQueueProcessorAgain = false
@@ -336,15 +336,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTa
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 610))
 
         debugStatusLabel.textColor = .secondaryLabelColor
-        debugQueueLabel.textColor = .secondaryLabelColor
-        debugQueueLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        debugQueueLabel.maximumNumberOfLines = 4
-        debugQueueLabel.lineBreakMode = .byTruncatingTail
+        debugQueueTextView.isEditable = false
+        debugQueueTextView.isSelectable = true
+        debugQueueTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        debugQueueTextView.textColor = .secondaryLabelColor
+        debugQueueTextView.backgroundColor = .textBackgroundColor
+        debugQueueTextView.isHorizontallyResizable = false
+        debugQueueTextView.isVerticallyResizable = true
+        debugQueueTextView.autoresizingMask = [.width]
+        debugQueueTextView.textContainer?.widthTracksTextView = true
+        debugQueueTextView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
 
         let queueScrollView = NSScrollView()
         queueScrollView.borderType = .bezelBorder
         queueScrollView.hasVerticalScroller = true
-        queueScrollView.documentView = debugQueueLabel
+        queueScrollView.documentView = debugQueueTextView
 
         debugTextView.isEditable = false
         debugTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -750,7 +759,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTa
             includingPropertiesForKeys: nil
         ))?.filter { $0.pathExtension.lowercased() == "eml" }.sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
         guard !files.isEmpty else {
-            debugQueueLabel.stringValue = "Current pdfmail queue: 0 pending emails"
+            debugQueueTextView.string = "Current pdfmail queue: 0 pending emails"
             return
         }
         let itemLines = files.map { fileURL -> String in
@@ -766,7 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTa
             }
             return "• \(subject) (\(fileURL.lastPathComponent))"
         }
-        debugQueueLabel.stringValue = "Current pdfmail queue: \(files.count) pending email\(files.count == 1 ? "" : "s")\n" + itemLines.joined(separator: "\n")
+        debugQueueTextView.string = "Current pdfmail queue: \(files.count) pending email\(files.count == 1 ? "" : "s")\n" + itemLines.joined(separator: "\n")
     }
 
     private func queueDirectoryURLs() -> [URL] {
